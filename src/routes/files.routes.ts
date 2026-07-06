@@ -11,7 +11,7 @@ import { Router } from 'express';
 import { serveLocalFileHandler } from '../controllers/files.controller';
 import { LOCAL_FILES_ROUTE } from '../storage/storage.constant';
 
-const filesRouter = Router();
+const filesRouter: Router = Router();
 
 // `*` captures the full Object Storage Key (which may contain `/`) as params[0].
 filesRouter.get(`${LOCAL_FILES_ROUTE}/*`, serveLocalFileHandler);

@@ -65,7 +65,7 @@ const downloadParamsSchema = z.object({
  * Mount at `/api` so the effective routes are `POST /api/downloads/gate` and
  * `POST /api/materials/:id/download`.
  */
-const downloadsRouter = Router();
+const downloadsRouter: Router = Router();
 
 downloadsRouter.use(authMiddleware);
 downloadsRouter.post(

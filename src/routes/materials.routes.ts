@@ -69,7 +69,7 @@ const materialParamsSchema = z.object({
  * The literal `/materials/search` and `/materials/paid` routes are registered
  * before `/materials/:id` so they win over the `:id` parameter match.
  */
-const materialsRouter = Router();
+const materialsRouter: Router = Router();
 
 materialsRouter.use(authMiddleware);
 materialsRouter.get(

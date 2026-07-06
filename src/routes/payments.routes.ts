@@ -61,7 +61,7 @@ const verifyBodySchema = z.object({
  * raw bytes Razorpay signed; the app assembly excludes this path from the
  * global JSON parser so those bytes are never consumed beforehand (Req 12.19).
  */
-const paymentsRouter = Router();
+const paymentsRouter: Router = Router();
 
 paymentsRouter.post(
   '/materials/:id/payment',

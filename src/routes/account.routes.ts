@@ -40,7 +40,7 @@ const accountLoginBodySchema = z.object({
  * Router exposing the account sign-in endpoint. Mount at `/api` so the
  * effective route is `POST /api/account/login`.
  */
-const accountRouter = Router();
+const accountRouter: Router = Router();
 
 accountRouter.use(authMiddleware);
 accountRouter.post(

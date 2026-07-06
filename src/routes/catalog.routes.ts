@@ -19,7 +19,7 @@ import { authMiddleware } from '../middleware/auth.middleware';
  * Router exposing the public Material Catalog endpoint. Mount at `/api` so the
  * effective route is `GET /api/catalog` (Req 3.1).
  */
-const catalogRouter = Router();
+const catalogRouter: Router = Router();
 
 catalogRouter.use(authMiddleware);
 catalogRouter.get('/catalog', getCatalog);
