@@ -1,0 +1,19 @@
+{
+  "build": {
+    "builder": "NIXPACKS",
+    "buildCommand": "npm run build"
+  },
+  "deploy": {
+    "preDeployCommand": "npm run release",
+    "startCommand": "npm run start",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 300,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
+  },
+  "variables": {
+    "RAZORPAY_KEY_ID": "${{shared.RAZORPAY_KEY_ID}}",
+    "RAZORPAY_KEY_SECRET": "${{shared.RAZORPAY_KEY_SECRET}}",
+    "RAZORPAY_WEBHOOK_SECRET": "${{shared.RAZORPAY_WEBHOOK_SECRET}}"
+  }
+}

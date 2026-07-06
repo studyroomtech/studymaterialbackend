@@ -1,0 +1,141 @@
+// backend/prisma/schema.prisma
+// Study Materials Platform — full data model (Phase 1).
+// The complete schema (including Payment/Entitlement tables and price fields)
+// is authored up-front so the initial migration is stable; no payment behavior
+// is wired in Phase 1.
+// Requirements: 1.12, 1.13, 2.1, 6.4, 6.9, 11.11, 12.8, 12.11
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL") // Req 1.10 / 1.12
+}
+
+model Admin {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  role         String   @default("role_admin") // Req 10.1
+  createdAt    DateTime @default(now())
+}
+
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique // Req 6.4, 6.9 (unique email; upsert by email)
+  name         String
+  roles        String[]      @default(["role_common"]) // every learner starts as role_common (Req 10.1, 10.2)
+  createdAt    DateTime      @default(now())
+  downloads    Download[]
+  payments     Payment[]
+  entitlements Entitlement[]
+
+  @@index([email])
+}
+
+model CategoryType {
+  id        String   @id @default(cuid())
+  name      String   @unique // Req 2.1, 11.7 (unique 1–100)
+  createdAt DateTime @default(now())
+  tags      Tag[]
+}
+
+model Tag {
+  id             String        @id @default(cuid())
+  name           String
+  categoryTypeId String
+  categoryType   CategoryType  @relation(fields: [categoryTypeId], references: [id], onDelete: Cascade)
+  createdAt      DateTime      @default(now())
+  materialTags   MaterialTag[]
+
+  @@unique([categoryTypeId, name]) // Req 11.11 unique within scope
+  @@index([categoryTypeId])
+}
+
+model StudyMaterial {
+  id            String        @id @default(cuid())
+  title         String // 1–200 chars (app-validated)
+  description   String        @default("") // 0–2000 chars (app-validated)
+  objectKey     String // R2 key (Req 1.13)
+  fileName      String
+  contentType   String
+  fileSizeBytes Int
+  priceAmount   Int? // null/0 => Free; >0 => Paid (Req 11.13–11.14). Smallest currency unit (paise).
+  currency      String        @default("INR") // Req 11.13/12: INR only (app-validated)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  materialTags  MaterialTag[]
+  downloads     Download[]
+  payments      Payment[]
+  entitlements  Entitlement[]
+
+  @@index([title])
+}
+
+enum PaymentStatus {
+  created
+  successful
+  failed
+}
+
+model Payment {
+  id                String        @id @default(cuid())
+  userId            String
+  studyMaterialId   String
+  amount            Int // charged amount in smallest currency unit (paise)
+  currency          String        @default("INR")
+  razorpayOrderId   String        @unique // one Payment per Razorpay order
+  razorpayPaymentId String? // set on successful verification (Req 12.6)
+  status            PaymentStatus @default(created) // created|successful|failed (Req 12.4, 12.6, 12.7)
+  createdAt         DateTime      @default(now()) // ISO 8601 on serialization (Req 12.9)
+  updatedAt         DateTime      @updatedAt // ISO 8601 on serialization (Req 12.9)
+  user              User          @relation(fields: [userId], references: [id])
+  studyMaterial     StudyMaterial @relation(fields: [studyMaterialId], references: [id])
+  entitlement       Entitlement?
+
+  @@index([userId])
+  @@index([studyMaterialId])
+  @@index([status])
+}
+
+model Entitlement {
+  id              String        @id @default(cuid())
+  userId          String
+  studyMaterialId String
+  paymentId       String        @unique // the successful Payment that granted access
+  createdAt       DateTime      @default(now())
+  user            User          @relation(fields: [userId], references: [id])
+  studyMaterial   StudyMaterial @relation(fields: [studyMaterialId], references: [id])
+  payment         Payment       @relation(fields: [paymentId], references: [id])
+
+  @@unique([userId, studyMaterialId]) // at most one entitlement per (user, material) (Req 12.8, 12.11)
+  @@index([userId])
+  @@index([studyMaterialId])
+}
+
+model MaterialTag {
+  id              String        @id @default(cuid())
+  studyMaterialId String
+  tagId           String
+  studyMaterial   StudyMaterial @relation(fields: [studyMaterialId], references: [id], onDelete: Cascade)
+  tag             Tag           @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([studyMaterialId, tagId]) // no duplicate assignment; supports <=50 limit
+  @@index([tagId])
+  @@index([studyMaterialId])
+}
+
+model Download {
+  id              String        @id @default(cuid())
+  userId          String
+  studyMaterialId String
+  downloadedAt    DateTime      @default(now()) // stored/serialized ISO 8601 (Req 9.2)
+  user            User          @relation(fields: [userId], references: [id])
+  studyMaterial   StudyMaterial @relation(fields: [studyMaterialId], references: [id])
+
+  @@index([userId])
+  @@index([studyMaterialId])
+  @@index([downloadedAt])
+}
