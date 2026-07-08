@@ -31,6 +31,15 @@ export const FREE_PRICE_AMOUNT = 0;
 /** The default (and only supported) Currency for Prices and Payments (Req 11.13). */
 export const DEFAULT_CURRENCY = 'INR';
 
+/**
+ * Number of paise in one rupee. Study Material Prices are stored/displayed in
+ * whole rupees, but Razorpay charges in the smallest currency unit (paise), so
+ * a rupee Price is multiplied by this factor at the Razorpay boundary (order
+ * creation + checkout). Razorpay's minimum order is 100 paise (₹1), which the
+ * 1-rupee minimum Price satisfies (Req 12.4).
+ */
+export const PAISE_PER_RUPEE = 100;
+
 /** Payment Status values (Req 12 glossary: Payment Status). */
 export const PAYMENT_STATUS_CREATED = 'created';
 export const PAYMENT_STATUS_SUCCESSFUL = 'successful';

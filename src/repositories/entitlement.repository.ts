@@ -55,3 +55,18 @@ export function findEntitlement(
     },
   });
 }
+
+/**
+ * List the Study Material ids the given Learner is entitled to. Backs the
+ * entitlement-aware Paid Materials listing so already-purchased materials show
+ * View/Download instead of Buy (Req 12.3).
+ */
+export async function listEntitledMaterialIds(
+  userId: string
+): Promise<string[]> {
+  const rows = await getPrismaClient().entitlement.findMany({
+    where: { userId },
+    select: { studyMaterialId: true },
+  });
+  return rows.map((row) => row.studyMaterialId);
+}

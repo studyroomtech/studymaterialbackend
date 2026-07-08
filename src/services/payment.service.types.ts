@@ -28,7 +28,7 @@ import type { PaymentSignatureInput } from './razorpay.service.types';
 export interface PaymentRecord {
   id: string;
   userId: string;
-  studyMaterialId: string;
+  studyMaterialIds: string[];
   amount: number;
   currency: string;
   status: PaymentStatus;
@@ -75,7 +75,7 @@ export interface PaymentEntitlementRecord {
  */
 export interface CreatePaymentRecordInput {
   userId: string;
-  studyMaterialId: string;
+  studyMaterialIds: string[];
   amount: number;
   currency?: string;
   razorpayOrderId: string;
@@ -210,7 +210,7 @@ export interface PaymentServiceDeps {
 export interface WebhookHandlingResult {
   handled: boolean;
   event: string | null;
-  studyMaterialId?: string;
+  studyMaterialIds?: string[];
 }
 
 /**
@@ -245,7 +245,7 @@ export interface PaymentService {
    */
   initiatePayment(
     token: string,
-    studyMaterialId: string,
+    studyMaterialIds: string[],
   ): Promise<PaymentOrderResult>;
   /**
    * Verify a Payment confirmation server-side (the sole entitlement path):
@@ -273,7 +273,7 @@ export interface PaymentService {
 export interface PaymentOrderResult {
   paymentId: string;
   razorpayOrderId: string;
-  studyMaterialId: string;
+  studyMaterialIds: string[];
   amount: number;
   currency: string;
   razorpayKeyId: string;
@@ -287,6 +287,6 @@ export interface PaymentOrderResult {
 export interface PaymentVerifyResult {
   verified: true;
   status: PaymentStatus;
-  studyMaterialId: string;
+  studyMaterialIds: string[];
   entitled: boolean;
 }

@@ -12,7 +12,7 @@ import type { PaymentStatus } from '@prisma/client';
  */
 export interface CreatePaymentInput {
   userId: string;
-  studyMaterialId: string;
+  studyMaterialIds: string[];
   amount: number;
   currency?: string;
   razorpayOrderId: string;

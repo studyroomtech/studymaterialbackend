@@ -32,6 +32,7 @@
 import type { NextFunction, Request, Response } from 'express';
 
 import { listMaterials } from '../repositories/material.repository';
+import { listEntitledMaterialIds } from '../repositories/entitlement.repository';
 import { createDefaultPaymentService } from '../services/payment.service';
 import { classifyPrice } from '../services/price.service';
 import { DEFAULT_CURRENCY } from '../constants/payment.constant';
@@ -81,7 +82,10 @@ function extractWebhookSignature(value: string | string[] | undefined): string {
  * positive integer here because the caller has already filtered to Paid
  * Materials via `classifyPrice`.
  */
-function toPaidMaterialDto(material: MaterialWithTags): PaidMaterialDto {
+function toPaidMaterialDto(
+  material: MaterialWithTags,
+  entitledIds: ReadonlySet<string>,
+): PaidMaterialDto {
   return {
     id: material.id,
     title: material.title,
@@ -89,6 +93,7 @@ function toPaidMaterialDto(material: MaterialWithTags): PaidMaterialDto {
     priceAmount: material.priceAmount as number,
     currency: material.currency ?? DEFAULT_CURRENCY,
     isPaid: true,
+    isEntitled: entitledIds.has(material.id),
   };
 }
 
@@ -100,15 +105,21 @@ function toPaidMaterialDto(material: MaterialWithTags): PaidMaterialDto {
  * gated by a Payment Entitlement (Req 12.3).
  */
 export async function listPaidMaterialsHandler(
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
     const materials = await listMaterials();
+    // Resolve the caller's existing entitlements (from their Access Token) so
+    // already-purchased materials render View/Download instead of Buy (Req 12.3).
+    const userId = req.auth.userId;
+    const entitledIds = new Set<string>(
+      userId !== undefined ? await listEntitledMaterialIds(userId) : [],
+    );
     const paid = materials
       .filter((material) => classifyPrice(material.priceAmount) === 'paid')
-      .map(toPaidMaterialDto);
+      .map((material) => toPaidMaterialDto(material, entitledIds));
     const body: PaidMaterialsResponse = { materials: paid };
     res.status(200).json(body);
   } catch (error) {
@@ -132,15 +143,47 @@ export async function initiatePaymentHandler(
 ): Promise<void> {
   try {
     const token = extractBearerToken(req.headers.authorization);
+    const order = await createDefaultPaymentService().initiatePayment(token, [
+      req.params.id,
+    ]);
+    const body: PaymentInitiateResponse = {
+      razorpayOrderId: order.razorpayOrderId,
+      amount: order.amount,
+      currency: order.currency,
+      keyId: order.razorpayKeyId,
+      studyMaterialIds: order.studyMaterialIds,
+    };
+    res.status(200).json(body);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * `POST /api/payments/initiate` — initiate a Payment for a cart of Paid
+ * Materials (Req 12.4, 12.5). The body carries the `studyMaterialIds`; the
+ * service resolves the Learner, skips Free/already-entitled items, sums the
+ * chargeable prices into a single Razorpay order, and persists one Payment
+ * Record covering them. Returns the order details plus the public Razorpay key.
+ */
+export async function initiateCartPaymentHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const token = extractBearerToken(req.headers.authorization);
+    const { studyMaterialIds } = req.body as { studyMaterialIds: string[] };
     const order = await createDefaultPaymentService().initiatePayment(
       token,
-      req.params.id,
+      studyMaterialIds,
     );
     const body: PaymentInitiateResponse = {
       razorpayOrderId: order.razorpayOrderId,
       amount: order.amount,
       currency: order.currency,
       keyId: order.razorpayKeyId,
+      studyMaterialIds: order.studyMaterialIds,
     };
     res.status(200).json(body);
   } catch (error) {
@@ -171,7 +214,7 @@ export async function verifyPaymentHandler(
     const body: PaymentVerifyResponse = {
       verified: result.verified,
       status: result.status,
-      studyMaterialId: result.studyMaterialId,
+      studyMaterialIds: result.studyMaterialIds,
       entitled: result.entitled,
     };
     res.status(200).json(body);

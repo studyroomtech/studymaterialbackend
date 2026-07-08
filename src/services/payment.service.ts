@@ -35,13 +35,14 @@
 // errors the errorHandler maps to the unified envelope without leaking
 // internals (Req 8.4).
 
-import RazorpaySdk from 'razorpay';
+import RazorpaySdk from "razorpay";
 
-import { ROLE_COMMON } from '../constants/roles.constant';
+import { ROLE_COMMON } from "../constants/roles.constant";
 import {
   DEFAULT_CURRENCY,
+  PAISE_PER_RUPEE,
   PAYMENT_STATUS,
-} from '../constants/payment.constant';
+} from "../constants/payment.constant";
 import {
   AuthRequiredError,
   AlreadyEntitledError,
@@ -50,21 +51,21 @@ import {
   PaymentNotRequiredError,
   PaymentVerificationFailedError,
   WebhookVerificationFailedError,
-} from '../utils/errors';
-import { logError } from '../utils/logger';
-import { getEnv } from '../config/env';
-import { classifyPrice } from './price.service';
+} from "../utils/errors";
+import { logError } from "../utils/logger";
+import { getEnv } from "../config/env";
+import { classifyPrice } from "./price.service";
 import {
   verifyPaymentSignature,
   verifyWebhookSignature,
-} from './razorpay.service';
-import { verifyToken } from './token.service';
-import * as paymentRepository from '../repositories/payment.repository';
-import * as entitlementRepository from '../repositories/entitlement.repository';
-import * as materialRepository from '../repositories/material.repository';
-import * as userRepository from '../repositories/user.repository';
-import { WEBHOOK_EVENT_PAYMENT_CAPTURED } from './payment.service.constant';
-import type { PaymentSignatureInput } from './razorpay.service.types';
+} from "./razorpay.service";
+import { verifyToken } from "./token.service";
+import * as paymentRepository from "../repositories/payment.repository";
+import * as entitlementRepository from "../repositories/entitlement.repository";
+import * as materialRepository from "../repositories/material.repository";
+import * as userRepository from "../repositories/user.repository";
+import { WEBHOOK_EVENT_PAYMENT_CAPTURED } from "./payment.service.constant";
+import type { PaymentSignatureInput } from "./razorpay.service.types";
 import type {
   ParsedWebhookEvent,
   PaymentOrderResult,
@@ -72,7 +73,7 @@ import type {
   PaymentServiceDeps,
   PaymentVerifyResult,
   WebhookHandlingResult,
-} from './payment.service.types';
+} from "./payment.service.types";
 
 // --- Pure helpers (no I/O) ------------------------------------------------
 
@@ -89,13 +90,14 @@ export function parseWebhookEvent(
 ): ParsedWebhookEvent | null {
   let parsed: unknown;
   try {
-    const text = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
+    const text =
+      typeof rawBody === "string" ? rawBody : rawBody.toString("utf8");
     parsed = JSON.parse(text);
   } catch {
     return null;
   }
 
-  if (typeof parsed !== 'object' || parsed === null) {
+  if (typeof parsed !== "object" || parsed === null) {
     return null;
   }
 
@@ -106,17 +108,17 @@ export function parseWebhookEvent(
     };
   };
 
-  if (typeof body.event !== 'string') {
+  if (typeof body.event !== "string") {
     return null;
   }
 
   const entity = body.payload?.payment?.entity;
   const razorpayOrderId =
-    entity !== undefined && typeof entity.order_id === 'string'
+    entity !== undefined && typeof entity.order_id === "string"
       ? entity.order_id
       : null;
   const razorpayPaymentId =
-    entity !== undefined && typeof entity.id === 'string' ? entity.id : null;
+    entity !== undefined && typeof entity.id === "string" ? entity.id : null;
 
   return { event: body.event, razorpayOrderId, razorpayPaymentId };
 }
@@ -129,9 +131,7 @@ export function parseWebhookEvent(
  * order creator, signature verifiers, and token service (see
  * `createDefaultPaymentService`).
  */
-export function createPaymentService(
-  deps: PaymentServiceDeps,
-): PaymentService {
+export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
   const { payments, entitlements, materials, users } = deps;
 
   /**
@@ -147,16 +147,16 @@ export function createPaymentService(
     if (
       claims === null ||
       claims.role !== ROLE_COMMON ||
-      typeof claims.sub !== 'string'
+      typeof claims.sub !== "string"
     ) {
       throw new AuthRequiredError(
-        'A valid email is required to initiate a Payment.',
+        "A valid email is required to initiate a Payment.",
       );
     }
     const user = await users.findUserById(claims.sub);
     if (user === null) {
       throw new AuthRequiredError(
-        'A valid email is required to initiate a Payment.',
+        "A valid email is required to initiate a Payment.",
       );
     }
     return user;
@@ -176,58 +176,77 @@ export function createPaymentService(
    */
   async function initiatePayment(
     token: string,
-    studyMaterialId: string,
+    studyMaterialIds: string[],
   ): Promise<PaymentOrderResult> {
     const user = await resolveLearner(token);
 
-    const material = await materials.findMaterialById(studyMaterialId);
-    if (material === null) {
-      throw new NotFoundError(
-        `The requested Study Material '${studyMaterialId}' was not found.`,
-      );
-    }
-
-    // Free Material → no payment required; no Razorpay order (Req 12.10).
-    if (classifyPrice(material.priceAmount) === 'free') {
+    // De-duplicate the requested materials, preserving order.
+    const requestedIds = Array.from(new Set(studyMaterialIds));
+    if (requestedIds.length === 0) {
       throw new PaymentNotRequiredError();
     }
-    // `priceAmount` is a positive integer here by classification.
-    const amount = material.priceAmount as number;
-    const currency = material.currency ?? DEFAULT_CURRENCY;
 
-    // Already entitled → no duplicate order (Req 12.11).
-    const existing = await entitlements.findEntitlement(
-      user.id,
-      studyMaterialId,
-    );
-    if (existing !== null) {
+    // Resolve every requested material, summing the chargeable ones. A material
+    // that doesn't exist → 404; a Free Material is skipped (nothing to charge);
+    // an already-entitled material is skipped (no double charge, Req 12.11).
+    let currency = DEFAULT_CURRENCY;
+    let totalRupees = 0;
+    const chargeableIds: string[] = [];
+
+    for (const id of requestedIds) {
+      const material = await materials.findMaterialById(id);
+      if (material === null) {
+        throw new NotFoundError(
+          `The requested Study Material '${id}' was not found.`,
+        );
+      }
+      if (classifyPrice(material.priceAmount) === 'free') {
+        continue;
+      }
+      const existing = await entitlements.findEntitlement(user.id, id);
+      if (existing !== null) {
+        continue;
+      }
+      currency = material.currency ?? DEFAULT_CURRENCY;
+      totalRupees += material.priceAmount as number;
+      chargeableIds.push(id);
+    }
+
+    // Nothing chargeable remains: either every item is Free (no payment
+    // required) or the Learner is already entitled to all of them (Req 12.10,
+    // 12.11).
+    if (chargeableIds.length === 0) {
       throw new AlreadyEntitledError();
     }
 
-    // Preconditions passed → create the Razorpay order (Req 12.4).
-    const order = await deps.createOrder({
-      amount,
-      currency,
-      receipt: `mat_${studyMaterialId}_user_${user.id}`,
-    });
+    // Prices are whole rupees; Razorpay charges in paise, so convert at this
+    // boundary — the paise total is what we send to Razorpay, persist, and hand
+    // to the checkout so all three agree (Req 12.4).
+    const amountInPaise = totalRupees * PAISE_PER_RUPEE;
 
     // Persist the Payment Record with status `created` (Req 12.4, 12.9). A
     // persistence failure is logged with a timestamp; no Entitlement is granted
     // (Req 12.14).
     let payment;
     try {
+      // Razorpay caps `receipt` at 40 chars, so build a short cart receipt.
+      const order = await deps.createOrder({
+        amount: amountInPaise,
+        currency,
+        receipt: `cart_${user.id.slice(-12)}_${Date.now().toString(36)}`,
+      });
+
       payment = await payments.createPayment({
         userId: user.id,
-        studyMaterialId,
-        amount,
+        studyMaterialIds: chargeableIds,
+        amount: amountInPaise,
         currency,
         razorpayOrderId: order.id,
       });
     } catch (error) {
       logError('Failed to persist Payment Record on initiation', {
         userId: user.id,
-        studyMaterialId,
-        razorpayOrderId: order.id,
+        studyMaterialIds: chargeableIds,
         error: error instanceof Error ? error.message : String(error),
       });
       throw new InternalError();
@@ -236,7 +255,7 @@ export function createPaymentService(
     return {
       paymentId: payment.id,
       razorpayOrderId: payment.razorpayOrderId,
-      studyMaterialId,
+      studyMaterialIds: payment.studyMaterialIds,
       amount: payment.amount,
       currency: payment.currency,
       razorpayKeyId: deps.razorpayKeyId,
@@ -267,7 +286,7 @@ export function createPaymentService(
         status: PAYMENT_STATUS.FAILED,
       });
     } catch (error) {
-      logError('Failed to persist Payment Record failure transition', {
+      logError("Failed to persist Payment Record failure transition", {
         paymentId: payment.id,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -314,18 +333,22 @@ export function createPaymentService(
         status: PAYMENT_STATUS.SUCCESSFUL,
         razorpayPaymentId: input.razorpayPaymentId,
       });
-      await entitlements.upsertEntitlement({
-        userId: payment.userId,
-        studyMaterialId: payment.studyMaterialId,
-        paymentId: payment.id,
-      });
+      // Grant one Entitlement per covered material; upsert keeps it idempotent
+      // so re-verifying (or the webhook) creates no duplicates (Req 12.8, 12.19).
+      for (const studyMaterialId of payment.studyMaterialIds) {
+        await entitlements.upsertEntitlement({
+          userId: payment.userId,
+          studyMaterialId,
+          paymentId: payment.id,
+        });
+      }
     } catch (error) {
       // Req 12.14: log the persistence failure with a timestamp and grant no
       // Entitlement.
-      logError('Failed to persist verified Payment / Entitlement', {
+      logError("Failed to persist verified Payment / Entitlement", {
         paymentId: payment.id,
         userId: payment.userId,
-        studyMaterialId: payment.studyMaterialId,
+        studyMaterialIds: payment.studyMaterialIds,
         error: error instanceof Error ? error.message : String(error),
       });
       throw new InternalError();
@@ -334,7 +357,7 @@ export function createPaymentService(
     return {
       verified: true,
       status: PAYMENT_STATUS.SUCCESSFUL,
-      studyMaterialId: payment.studyMaterialId,
+      studyMaterialIds: payment.studyMaterialIds,
       entitled: true,
     };
   }
@@ -387,16 +410,18 @@ export function createPaymentService(
           ? { razorpayPaymentId: parsed.razorpayPaymentId }
           : {}),
       });
-      await entitlements.upsertEntitlement({
-        userId: payment.userId,
-        studyMaterialId: payment.studyMaterialId,
-        paymentId: payment.id,
-      });
+      for (const studyMaterialId of payment.studyMaterialIds) {
+        await entitlements.upsertEntitlement({
+          userId: payment.userId,
+          studyMaterialId,
+          paymentId: payment.id,
+        });
+      }
     } catch (error) {
-      logError('Failed to persist webhook-confirmed Payment / Entitlement', {
+      logError("Failed to persist webhook-confirmed Payment / Entitlement", {
         paymentId: payment.id,
         userId: payment.userId,
-        studyMaterialId: payment.studyMaterialId,
+        studyMaterialIds: payment.studyMaterialIds,
         error: error instanceof Error ? error.message : String(error),
       });
       throw new InternalError();
@@ -405,7 +430,7 @@ export function createPaymentService(
     return {
       handled: true,
       event: parsed.event,
-      studyMaterialId: payment.studyMaterialId,
+      studyMaterialIds: payment.studyMaterialIds,
     };
   }
 

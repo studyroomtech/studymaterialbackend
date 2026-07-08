@@ -24,7 +24,7 @@ export function createPayment(input: CreatePaymentInput): Promise<Payment> {
   return getPrismaClient().payment.create({
     data: {
       userId: input.userId,
-      studyMaterialId: input.studyMaterialId,
+      studyMaterialIds: input.studyMaterialIds,
       amount: input.amount,
       ...(input.currency !== undefined ? { currency: input.currency } : {}),
       razorpayOrderId: input.razorpayOrderId,

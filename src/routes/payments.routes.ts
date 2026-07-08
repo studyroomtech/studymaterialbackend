@@ -26,6 +26,7 @@ import express, { Router } from 'express';
 import { z } from 'zod';
 
 import {
+  initiateCartPaymentHandler,
   initiatePaymentHandler,
   razorpayWebhookHandler,
   verifyPaymentHandler,
@@ -39,6 +40,14 @@ import { validate } from '../middleware/validate.middleware';
  */
 const paymentParamsSchema = z.object({
   id: z.string().min(1),
+});
+
+/**
+ * Body schema for `POST /api/payments/initiate` — a non-empty list of Paid
+ * Material ids to check out as a cart (Req 12.4).
+ */
+const cartInitiateBodySchema = z.object({
+  studyMaterialIds: z.array(z.string().min(1)).min(1),
 });
 
 /**
@@ -68,6 +77,13 @@ paymentsRouter.post(
   authMiddleware,
   validate({ params: paymentParamsSchema }),
   initiatePaymentHandler,
+);
+
+paymentsRouter.post(
+  '/payments/initiate',
+  authMiddleware,
+  validate({ body: cartInitiateBodySchema }),
+  initiateCartPaymentHandler,
 );
 
 paymentsRouter.post(

@@ -226,6 +226,12 @@ export interface PaidMaterialDto {
   priceAmount: number;
   currency: string;
   isPaid: true;
+  /**
+   * Whether the requesting Learner already holds a Payment Entitlement for this
+   * material — `true` shows View/Download instead of Buy (Req 12.3). Resolved
+   * from the caller's Access Token; `false` for an unauthenticated caller.
+   */
+  isEntitled: boolean;
 }
 
 /**
@@ -247,6 +253,8 @@ export interface PaymentInitiateResponse {
   amount: number;
   currency: string;
   keyId: string;
+  /** The Paid Materials this order covers (the chargeable subset of the cart). */
+  studyMaterialIds: string[];
 }
 
 /**
@@ -268,7 +276,7 @@ export interface PaymentVerifyRequest {
 export interface PaymentVerifyResponse {
   verified: boolean;
   status: PaymentStatus;
-  studyMaterialId: string;
+  studyMaterialIds: string[];
   entitled: boolean;
 }
 

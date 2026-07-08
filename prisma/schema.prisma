@@ -68,7 +68,6 @@ model StudyMaterial {
   updatedAt     DateTime      @updatedAt
   materialTags  MaterialTag[]
   downloads     Download[]
-  payments      Payment[]
   entitlements  Entitlement[]
 
   @@index([title])
@@ -83,8 +82,8 @@ enum PaymentStatus {
 model Payment {
   id                String        @id @default(cuid())
   userId            String
-  studyMaterialId   String
-  amount            Int // charged amount in smallest currency unit (paise)
+  studyMaterialIds  String[] // the Paid Materials this Payment covers (a cart)
+  amount            Int // total charged amount in smallest currency unit (paise)
   currency          String        @default("INR")
   razorpayOrderId   String        @unique // one Payment per Razorpay order
   razorpayPaymentId String? // set on successful verification (Req 12.6)
@@ -92,11 +91,9 @@ model Payment {
   createdAt         DateTime      @default(now()) // ISO 8601 on serialization (Req 12.9)
   updatedAt         DateTime      @updatedAt // ISO 8601 on serialization (Req 12.9)
   user              User          @relation(fields: [userId], references: [id])
-  studyMaterial     StudyMaterial @relation(fields: [studyMaterialId], references: [id])
-  entitlement       Entitlement?
+  entitlements      Entitlement[] // one Entitlement per covered material on success
 
   @@index([userId])
-  @@index([studyMaterialId])
   @@index([status])
 }
 
@@ -104,7 +101,7 @@ model Entitlement {
   id              String        @id @default(cuid())
   userId          String
   studyMaterialId String
-  paymentId       String        @unique // the successful Payment that granted access
+  paymentId       String // the successful Payment that granted access (one Payment → many)
   createdAt       DateTime      @default(now())
   user            User          @relation(fields: [userId], references: [id])
   studyMaterial   StudyMaterial @relation(fields: [studyMaterialId], references: [id])
@@ -113,6 +110,7 @@ model Entitlement {
   @@unique([userId, studyMaterialId]) // at most one entitlement per (user, material) (Req 12.8, 12.11)
   @@index([userId])
   @@index([studyMaterialId])
+  @@index([paymentId])
 }
 
 model MaterialTag {

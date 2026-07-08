@@ -53,7 +53,7 @@ export const ACCESS_TOKEN_TTL_SECONDS = 2592000;
 // A single client (keyed by IP) may make at most RATE_LIMIT_MAX_REQUESTS
 // requests within any RATE_LIMIT_WINDOW_MS millisecond sliding window; further
 // requests in that window are rejected with 429 TOO_MANY_REQUESTS.
-export const RATE_LIMIT_MAX_REQUESTS = 30;
+export const RATE_LIMIT_MAX_REQUESTS = 20;
 export const RATE_LIMIT_WINDOW_SECONDS = 10;
 export const RATE_LIMIT_WINDOW_MS = RATE_LIMIT_WINDOW_SECONDS * 1000;
 

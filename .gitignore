@@ -8,10 +8,7 @@
 /build
 *.tsbuildinfo
 
-# env files (keep the example)
-.env
-.env.*
-!.env.example
+
 
 # local object storage (NODE_ENV=local)
 .local-storage/
