@@ -9,6 +9,8 @@
     "release": "prisma migrate deploy",
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "reconcile": "node dist/jobs/reconcilePayments.js",
+    "reconcile:dev": "ts-node-dev --transpile-only src/jobs/reconcilePayments.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "structure-lint": "node scripts/structure-lint.mjs",

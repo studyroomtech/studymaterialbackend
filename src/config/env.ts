@@ -13,14 +13,21 @@
 // so the missing-configuration log entry is emitted via `console.error` with an
 // ISO 8601 timestamp here.
 
+import { logInfo } from '../utils/logger';
 import {
   DEFAULT_ADMIN_TOKEN_TTL_SECONDS,
   DEFAULT_CORS_ORIGINS,
   DEFAULT_NODE_ENV,
   DEFAULT_PORT,
   DEFAULT_PRESIGNED_URL_TTL_SECONDS,
+  DEFAULT_RECONCILE_BATCH_SIZE,
+  DEFAULT_RECONCILE_FAIL_AFTER_WINDOW_HOURS,
+  DEFAULT_RECONCILE_GRACE_WINDOW_MINUTES,
   ENV_KEYS,
   LOCAL_ENV,
+  RECONCILE_BATCH_SIZE_BOUNDS,
+  RECONCILE_FAIL_AFTER_WINDOW_BOUNDS,
+  RECONCILE_GRACE_WINDOW_BOUNDS,
 } from './env.constant';
 import { EnvConfig } from './env.types';
 
@@ -65,6 +72,34 @@ function readPositiveInt(
   }
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
+/**
+ * Parses an integer variable constrained to the inclusive range `[min, max]`.
+ *
+ * When the value is absent, blank, not an integer, or outside the bounds, logs
+ * a default-applied notice via `logInfo` (with the offending `key` and the
+ * `appliedDefault`) and returns `fallback`. This keeps reconciliation tuning
+ * non-fatal: invalid values never abort boot, they fall back to defaults with a
+ * logged trace (Req 9.2, 9.3, 9.4).
+ */
+function readBoundedIntWithDefault(
+  source: NodeJS.ProcessEnv,
+  key: string,
+  fallback: number,
+  min: number,
+  max: number
+): number {
+  const value = readOptional(source, key);
+  const parsed = value === undefined ? NaN : Number(value);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    logInfo('Applied default for reconciliation configuration key', {
+      key,
+      appliedDefault: fallback,
+    });
     return fallback;
   }
   return parsed;
@@ -159,6 +194,31 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): EnvConfig {
       keySecret: razorpayKeySecret,
       webhookSecret: razorpayWebhookSecret,
     },
+    // Reconciliation tuning (Req 9). Optional; invalid values fall back to
+    // defaults with a logged notice rather than aborting boot (Req 9.2–9.4).
+    reconciliation: {
+      graceWindowMinutes: readBoundedIntWithDefault(
+        source,
+        ENV_KEYS.RECONCILE_GRACE_WINDOW_MINUTES,
+        DEFAULT_RECONCILE_GRACE_WINDOW_MINUTES,
+        RECONCILE_GRACE_WINDOW_BOUNDS.min,
+        RECONCILE_GRACE_WINDOW_BOUNDS.max
+      ),
+      failAfterWindowHours: readBoundedIntWithDefault(
+        source,
+        ENV_KEYS.RECONCILE_FAIL_AFTER_WINDOW_HOURS,
+        DEFAULT_RECONCILE_FAIL_AFTER_WINDOW_HOURS,
+        RECONCILE_FAIL_AFTER_WINDOW_BOUNDS.min,
+        RECONCILE_FAIL_AFTER_WINDOW_BOUNDS.max
+      ),
+      batchSize: readBoundedIntWithDefault(
+        source,
+        ENV_KEYS.RECONCILE_BATCH_SIZE,
+        DEFAULT_RECONCILE_BATCH_SIZE,
+        RECONCILE_BATCH_SIZE_BOUNDS.min,
+        RECONCILE_BATCH_SIZE_BOUNDS.max
+      ),
+    },
   };
 }
 
@@ -171,6 +231,5 @@ export function getEnv(): EnvConfig {
   if (cached === undefined) {
     cached = loadEnv();
   }
-  console.log('cached',cached)
   return cached;
 }

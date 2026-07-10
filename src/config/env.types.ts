@@ -33,6 +33,22 @@ export interface RazorpayConfig {
 }
 
 /**
+ * Payment Reconciliation Job tuning (Req 9).
+ *
+ * All three are validated positive integers within bounds, falling back to
+ * defaults when the corresponding environment variable is absent or invalid
+ * (Req 9.2, 9.3, 9.4).
+ */
+export interface ReconciliationConfig {
+  /** Minimum age (minutes) before a `created` record is considered (Req 9.2). */
+  graceWindowMinutes: number;
+  /** Age (hours) past which an uncaptured record is failed (Req 9.3). */
+  failAfterWindowHours: number;
+  /** Max records processed per run (Req 9.4). */
+  batchSize: number;
+}
+
+/**
  * The fully-resolved, validated backend configuration.
  */
 export interface EnvConfig {
@@ -66,4 +82,6 @@ export interface EnvConfig {
   corsOrigins: string[];
   /** Razorpay credentials (required in Phase 2). */
   razorpay: RazorpayConfig;
+  /** Reconciliation job configuration (Req 9). */
+  reconciliation: ReconciliationConfig;
 }

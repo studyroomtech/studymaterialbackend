@@ -28,3 +28,15 @@ export interface UpdatePaymentStatusInput {
   status: PaymentStatus;
   razorpayPaymentId?: string;
 }
+
+/**
+ * Selection criteria for Stale Payment Records (Req 2.1–2.4). Selects only
+ * status `created` records whose `createdAt` is at or before the Grace Window
+ * cutoff, ordered oldest-first, capped at `limit` (the Batch Size).
+ */
+export interface FindStalePaymentsInput {
+  /** Cutoff instant (the Grace Window cutoff): include records created at or before this time. */
+  olderThan: Date;
+  /** Maximum number of records to return (the Batch Size). */
+  limit: number;
+}

@@ -52,7 +52,7 @@ import {
   PaymentVerificationFailedError,
   WebhookVerificationFailedError,
 } from "../utils/errors";
-import { logError } from "../utils/logger";
+import { logError, logInfo } from "../utils/logger";
 import { getEnv } from "../config/env";
 import { classifyPrice } from "./price.service";
 import {
@@ -69,9 +69,13 @@ import type { PaymentSignatureInput } from "./razorpay.service.types";
 import type {
   ParsedWebhookEvent,
   PaymentOrderResult,
+  PaymentRecord,
   PaymentService,
   PaymentServiceDeps,
   PaymentVerifyResult,
+  ReconciliationParams,
+  ReconciliationRunSummary,
+  ReconcilePaymentResult,
   WebhookHandlingResult,
 } from "./payment.service.types";
 
@@ -434,7 +438,198 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
     };
   }
 
-  return { initiatePayment, verifyPayment, handleWebhook };
+  /**
+   * Reconcile a single Stale Payment Record against Razorpay (Req 3–7).
+   *
+   * Queries Razorpay for the order's payments; on a Captured Razorpay Payment
+   * (`status === 'captured'`) promotes the record to `successful`, records that
+   * payment's id, and upserts one Entitlement per distinct studyMaterialId
+   * using the existing idempotent grant logic (Req 4). With no capture, marks
+   * `failed` when the record's age (relative to `runStartTime`) reaches the
+   * Fail-After Window (Req 5.1) else leaves it `created` (Req 5.2). Never
+   * downgrades a `successful` record — the same no-downgrade rule as
+   * `markFailedQuietly` (Req 6.1). A Razorpay query error or a persistence error
+   * is caught and logged with the paymentId, leaves the record's status
+   * unchanged, and yields the `errored` outcome (Req 7.1, 7.2, 7.3). One
+   * `logInfo` per record records the final status (Req 8.2).
+   */
+  async function reconcilePayment(
+    record: PaymentRecord,
+    params: ReconciliationParams,
+  ): Promise<ReconcilePaymentResult> {
+    const paymentId = record.id;
+    const razorpayOrderId = record.razorpayOrderId;
+
+    // No-downgrade guard — identical rule to markFailedQuietly (Req 6.1). A
+    // record already `successful` is left untouched, granting nothing further.
+    if (record.status === PAYMENT_STATUS.SUCCESSFUL) {
+      logInfo("Reconciled Payment Record", {
+        paymentId,
+        razorpayOrderId,
+        status: PAYMENT_STATUS.SUCCESSFUL,
+      });
+      return { paymentId, razorpayOrderId, outcome: "successful" };
+    }
+
+    // Query Razorpay for the true order state (Req 3.1). A transport/Razorpay
+    // error is isolated: log it, leave the status unchanged, return `errored`
+    // (Req 7.1, 7.3).
+    let payments_;
+    try {
+      payments_ = await deps.fetchOrderPayments(razorpayOrderId);
+    } catch (error) {
+      logError("Failed to query Razorpay during reconciliation", {
+        paymentId,
+        razorpayOrderId,
+        reason: "razorpay_query_failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { paymentId, razorpayOrderId, outcome: "errored" };
+    }
+
+    // A Captured Razorpay Payment is one whose status === 'captured' (Req 3.2/3.3).
+    const captured = payments_.filter((p) => p.status === "captured");
+
+    try {
+      if (captured.length >= 1) {
+        // Select exactly one captured payment as the reconciliation result
+        // (Req 3.4, 4.2), promote the record, and grant one Entitlement per
+        // distinct studyMaterialId via the idempotent upsert (Req 4.1, 4.3, 6.4).
+        const chosen = captured[0];
+        await payments.updatePaymentStatus(record.id, {
+          status: PAYMENT_STATUS.SUCCESSFUL,
+          razorpayPaymentId: chosen.id,
+        });
+        for (const studyMaterialId of new Set(record.studyMaterialIds)) {
+          await entitlements.upsertEntitlement({
+            userId: record.userId,
+            studyMaterialId,
+            paymentId: record.id,
+          });
+        }
+        logInfo("Reconciled Payment Record", {
+          paymentId,
+          razorpayOrderId,
+          status: PAYMENT_STATUS.SUCCESSFUL,
+        });
+        return { paymentId, razorpayOrderId, outcome: "successful" };
+      }
+
+      // No capture: decide `failed` vs leave `created` on the Fail-After Window
+      // (Req 5.1, 5.2). Age is measured from the run start time.
+      const ageMs = params.runStartTime.getTime() - record.createdAt.getTime();
+      const failAfterMs = params.failAfterWindowHours * 60 * 60 * 1000;
+      if (ageMs >= failAfterMs) {
+        // Past the Fail-After Window with no capture: mark the record
+        // system-cancelled (distinct from `failed` for audit clarity) — no
+        // paymentId recorded, no Entitlement granted (Req 5.1, 5.3).
+        await payments.updatePaymentStatus(record.id, {
+          status: PAYMENT_STATUS.SYSTEM_CANCELLED_OLD_AGE,
+        });
+        logInfo("Reconciled Payment Record", {
+          paymentId,
+          razorpayOrderId,
+          status: PAYMENT_STATUS.SYSTEM_CANCELLED_OLD_AGE,
+        });
+        return { paymentId, razorpayOrderId, outcome: "systemCancelled" };
+      }
+
+      // Still within the Fail-After Window — leave `created` (Req 5.2).
+      logInfo("Reconciled Payment Record", {
+        paymentId,
+        razorpayOrderId,
+        status: PAYMENT_STATUS.CREATED,
+      });
+      return { paymentId, razorpayOrderId, outcome: "created" };
+    } catch (error) {
+      // Persistence failure: log which operation, leave the status unchanged,
+      // return `errored` (Req 7.2, 7.3).
+      logError("Failed to persist Payment Record during reconciliation", {
+        paymentId,
+        razorpayOrderId,
+        operation:
+          captured.length >= 1 ? "updatePaymentStatus/upsertEntitlement" : "updatePaymentStatus",
+        reason: "persistence_failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { paymentId, razorpayOrderId, outcome: "errored" };
+    }
+  }
+
+  /**
+   * Select and reconcile one batch of Stale Payment Records (Req 1, 2, 8).
+   *
+   * Computes the Grace Window cutoff, selects up to Batch Size Stale Payment
+   * Records via `findStalePayments`, then reconciles each record inside its own
+   * try/catch so a thrown per-record error can never abort the loop (defense in
+   * depth on top of `reconcilePayment`'s internal handling, Req 7.4). Returns
+   * the accumulated Run Summary with the invariant
+   * `scanned === successful + failed + created + errored` (Req 8.1). A
+   * batch-level error (e.g. the selection query itself failing) propagates so
+   * the entrypoint can exit non-zero (Req 1.3).
+   */
+  async function reconcileBatch(
+    params: ReconciliationParams,
+  ): Promise<ReconciliationRunSummary> {
+    const olderThan = new Date(
+      params.runStartTime.getTime() - params.graceWindowMinutes * 60 * 1000,
+    );
+
+    // A selection failure is a batch-level error (Req 1.3): let it propagate.
+    const records = await payments.findStalePayments({
+      olderThan,
+      limit: params.batchSize,
+    });
+
+    const summary: ReconciliationRunSummary = {
+      scanned: 0,
+      successful: 0,
+      systemCancelled: 0,
+      created: 0,
+      errored: 0,
+    };
+
+    for (const record of records) {
+      summary.scanned += 1;
+      // Defense-in-depth isolation: even an unexpected throw is caught, counted
+      // as `errored`, and the loop continues (Req 7.4).
+      try {
+        const result = await reconcilePayment(record, params);
+        switch (result.outcome) {
+          case "successful":
+            summary.successful += 1;
+            break;
+          case "systemCancelled":
+            summary.systemCancelled += 1;
+            break;
+          case "created":
+            summary.created += 1;
+            break;
+          case "errored":
+            summary.errored += 1;
+            break;
+        }
+      } catch (error) {
+        summary.errored += 1;
+        logError("Unexpected error reconciling Payment Record", {
+          paymentId: record.id,
+          razorpayOrderId: record.razorpayOrderId,
+          reason: "unexpected_error",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return summary;
+  }
+
+  return {
+    initiatePayment,
+    verifyPayment,
+    handleWebhook,
+    reconcilePayment,
+    reconcileBatch,
+  };
 }
 
 // --- Default wiring -------------------------------------------------------
@@ -462,6 +657,7 @@ export function createDefaultPaymentService(): PaymentService {
       findPaymentByRazorpayOrderId:
         paymentRepository.findPaymentByRazorpayOrderId,
       updatePaymentStatus: paymentRepository.updatePaymentStatus,
+      findStalePayments: paymentRepository.findStalePayments,
     },
     entitlements: {
       findEntitlement: entitlementRepository.findEntitlement,
@@ -492,6 +688,15 @@ export function createDefaultPaymentService(): PaymentService {
         ...(input.receipt !== undefined ? { receipt: input.receipt } : {}),
       });
       return { id: String(order.id) };
+    },
+    async fetchOrderPayments(razorpayOrderId) {
+      // Razorpay returns { entity: 'collection', count, items: [...] }. Guard
+      // the loosely-typed result defensively: treat a missing/non-array
+      // `items` as no payments, and project each to the { id, status } subset
+      // the reconciliation logic needs (Req 3.1).
+      const result = await razorpay.orders.fetchPayments(razorpayOrderId);
+      const items = Array.isArray(result?.items) ? result.items : [];
+      return items.map((p) => ({ id: String(p.id), status: String(p.status) }));
     },
     verifyPaymentSignature: (input) => verifyPaymentSignature(input),
     verifyWebhookSignature: (rawBody, signature) =>

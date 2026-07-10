@@ -77,6 +77,7 @@ enum PaymentStatus {
   created
   successful
   failed
+  system_cancelled_due_to_old_age // reconciliation: no capture found past the Fail-After Window
 }
 
 model Payment {

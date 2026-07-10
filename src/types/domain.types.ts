@@ -81,7 +81,11 @@ export interface MaterialDto {
  * mirror `constants/payment.constant.ts` and form part of the persisted
  * Payment Record and API contract.
  */
-export type PaymentStatus = 'created' | 'successful' | 'failed';
+export type PaymentStatus =
+  | 'created'
+  | 'successful'
+  | 'failed'
+  | 'system_cancelled_due_to_old_age';
 
 /**
  * The Razorpay order details returned to the Frontend Project after the

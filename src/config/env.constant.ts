@@ -27,6 +27,11 @@ export const ENV_KEYS = {
   RAZORPAY_KEY_ID: 'RAZORPAY_KEY_ID',
   RAZORPAY_KEY_SECRET: 'RAZORPAY_KEY_SECRET',
   RAZORPAY_WEBHOOK_SECRET: 'RAZORPAY_WEBHOOK_SECRET',
+  // Payment reconciliation tuning (Phase 3). All optional; invalid values fall
+  // back to defaults with a logged notice (Req 9.2, 9.3, 9.4).
+  RECONCILE_GRACE_WINDOW_MINUTES: 'RECONCILE_GRACE_WINDOW_MINUTES',
+  RECONCILE_FAIL_AFTER_WINDOW_HOURS: 'RECONCILE_FAIL_AFTER_WINDOW_HOURS',
+  RECONCILE_BATCH_SIZE: 'RECONCILE_BATCH_SIZE',
 } as const;
 
 /** Default HTTP listen port when `PORT` is not provided. */
@@ -53,3 +58,31 @@ export const DEFAULT_ADMIN_TOKEN_TTL_SECONDS = 3600;
 
 /** Default presigned-URL lifetime (15 minutes) when not provided. */
 export const DEFAULT_PRESIGNED_URL_TTL_SECONDS = 900;
+
+/**
+ * Default Grace Window (minutes) before a `created` payment is considered
+ * stale and eligible for reconciliation, when the variable is not provided
+ * (Req 9.2).
+ */
+export const DEFAULT_RECONCILE_GRACE_WINDOW_MINUTES = 10;
+
+/**
+ * Default Fail-After Window (hours) after which a `created` payment with no
+ * captured Razorpay payment is marked `failed`, when not provided (Req 9.3).
+ */
+export const DEFAULT_RECONCILE_FAIL_AFTER_WINDOW_HOURS = 24;
+
+/**
+ * Default maximum number of stale payments reconciled per run, when not
+ * provided (Req 9.4).
+ */
+export const DEFAULT_RECONCILE_BATCH_SIZE = 100;
+
+/** Inclusive bounds for the Grace Window (minutes): 1 minute to 24 hours (Req 9.2). */
+export const RECONCILE_GRACE_WINDOW_BOUNDS = { min: 1, max: 1440 } as const;
+
+/** Inclusive bounds for the Fail-After Window (hours): 1 hour to 7 days (Req 9.3). */
+export const RECONCILE_FAIL_AFTER_WINDOW_BOUNDS = { min: 1, max: 168 } as const;
+
+/** Inclusive bounds for the Batch Size: 1 to 1000 records per run (Req 9.4). */
+export const RECONCILE_BATCH_SIZE_BOUNDS = { min: 1, max: 1000 } as const;

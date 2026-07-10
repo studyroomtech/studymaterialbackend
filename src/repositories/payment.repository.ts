@@ -9,9 +9,11 @@
 
 import type { Payment } from '@prisma/client';
 
+import { PAYMENT_STATUS } from '../constants/payment.constant';
 import { getPrismaClient } from './prismaClient';
 import type {
   CreatePaymentInput,
+  FindStalePaymentsInput,
   UpdatePaymentStatusInput,
 } from './payment.repository.types';
 
@@ -62,5 +64,25 @@ export function updatePaymentStatus(
         ? { razorpayPaymentId: input.razorpayPaymentId }
         : {}),
     },
+  });
+}
+
+/**
+ * Select Stale Payment Records for reconciliation: status `created` with
+ * `createdAt <= input.olderThan`, ordered oldest-first, limited to
+ * `input.limit` (Req 2.1, 2.2, 2.4, 1.4, 1.5). Records still within the Grace
+ * Window are excluded by the caller's choice of `olderThan` (Req 2.3). Relies
+ * on the `@@index([status])` for efficient selection.
+ */
+export function findStalePayments(
+  input: FindStalePaymentsInput
+): Promise<Payment[]> {
+  return getPrismaClient().payment.findMany({
+    where: {
+      status: PAYMENT_STATUS.CREATED,
+      createdAt: { lte: input.olderThan },
+    },
+    orderBy: { createdAt: 'asc' },
+    take: input.limit,
   });
 }

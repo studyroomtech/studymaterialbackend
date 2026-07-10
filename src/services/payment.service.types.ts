@@ -15,6 +15,7 @@
 // Prisma, the Razorpay SDK, and JWT (Req 12.4, 12.6–12.11, 12.14, 12.15, 12.18,
 // 12.19).
 
+import type { FindStalePaymentsInput } from '../repositories/payment.repository.types';
 import type { AccessTokenClaims } from '../types/auth.types';
 import type { PaymentStatus } from '../types/domain.types';
 import type { PaymentSignatureInput } from './razorpay.service.types';
@@ -115,6 +116,12 @@ export interface PaymentRepository {
     id: string,
     input: UpdatePaymentRecordInput,
   ): Promise<PaymentRecord>;
+  /**
+   * Select Stale Payment Records for reconciliation: status `created` with
+   * `createdAt <= input.olderThan`, ordered oldest-first, limited to
+   * `input.limit` (Req 2.1, 2.2, 2.4, 1.4).
+   */
+  findStalePayments(input: FindStalePaymentsInput): Promise<PaymentRecord[]>;
 }
 
 /**
@@ -178,6 +185,28 @@ export type RazorpayOrderCreator = (
 ) => Promise<RazorpayOrder>;
 
 /**
+ * The subset of a Razorpay payment (against an order) the reconciliation logic
+ * needs. `status` is the Razorpay payment status string; a Captured Razorpay
+ * Payment is one whose `status === 'captured'` (Req 3.2). Other fields Razorpay
+ * returns are ignored.
+ */
+export interface RazorpayOrderPayment {
+  id: string;
+  status: string;
+}
+
+/**
+ * Fetch all Razorpay payments recorded against a Razorpay Order Identifier
+ * (Req 3.1). Wrapping `razorpay.orders.fetchPayments` behind this contract keeps
+ * the reconciliation logic independent of the SDK and lets tests inject a
+ * deterministic fake. Rejects (throws) on a Razorpay/transport error so the
+ * per-record handler can isolate the failure (Req 7.1).
+ */
+export type RazorpayOrderPaymentsFetcher = (
+  razorpayOrderId: string,
+) => Promise<RazorpayOrderPayment[]>;
+
+/**
  * The dependency bundle the Payment service is constructed with. The concrete
  * Prisma-backed repositories, the Razorpay order creator, the signature
  * verifiers, and the JWT token service are injected by
@@ -199,6 +228,8 @@ export interface PaymentServiceDeps {
   verifyToken(token: string): AccessTokenClaims | null;
   /** The non-secret Razorpay Public Key Identifier echoed to the client (Req 12.4, 12.17). */
   razorpayKeyId: string;
+  /** Fetch all Razorpay payments for an order id, for reconciliation (Req 3.1). */
+  fetchOrderPayments: RazorpayOrderPaymentsFetcher;
 }
 
 /**
@@ -223,6 +254,45 @@ export interface ParsedWebhookEvent {
   event: string;
   razorpayOrderId: string | null;
   razorpayPaymentId: string | null;
+}
+
+/** The terminal outcome the reconciliation assigns to one Payment Record. */
+export type ReconcileOutcome =
+  | 'successful' // promoted (capture found) — Req 4
+  | 'systemCancelled' // no capture, past Fail-After Window → system_cancelled_due_to_old_age — Req 5.1
+  | 'created' // no capture, still within Fail-After Window — Req 5.2
+  | 'errored'; // Razorpay/DB error, status left unchanged — Req 7.3
+
+/** The result of reconciling a single Payment Record (drives logging/counting). */
+export interface ReconcilePaymentResult {
+  paymentId: string;
+  razorpayOrderId: string;
+  outcome: ReconcileOutcome;
+}
+
+/**
+ * The per-run counts logged as the Run Summary (Req 8.1). Invariant:
+ * scanned === successful + systemCancelled + created + errored.
+ */
+export interface ReconciliationRunSummary {
+  scanned: number;
+  successful: number;
+  /** No capture, past the Fail-After Window → system_cancelled_due_to_old_age (Req 5.1). */
+  systemCancelled: number;
+  created: number;
+  errored: number;
+}
+
+/** Timing/limit inputs for a run, resolved from config by the entrypoint. */
+export interface ReconciliationParams {
+  /** Run start time; all age comparisons are relative to this instant. */
+  runStartTime: Date;
+  /** Grace Window in minutes (record must be at least this old). */
+  graceWindowMinutes: number;
+  /** Fail-After Window in hours (mark failed past this age). */
+  failAfterWindowHours: number;
+  /** Batch Size (max records per run). */
+  batchSize: number;
 }
 
 /**
@@ -263,6 +333,31 @@ export interface PaymentService {
     rawBody: string | Buffer,
     signature: string,
   ): Promise<WebhookHandlingResult>;
+  /**
+   * Reconcile a single Stale Payment Record against Razorpay (Req 3–7). Queries
+   * Razorpay for the order's payments; on a Captured Razorpay Payment promotes
+   * the record to `successful`, records that payment's id, and upserts one
+   * Entitlement per distinct studyMaterialId (Req 4). With no capture, marks
+   * `failed` when age >= Fail-After Window (Req 5.1) else leaves it `created`
+   * (Req 5.2). Never downgrades a `successful` record (Req 6.1). A Razorpay or
+   * persistence error is caught, logged with the paymentId, leaves the status
+   * unchanged, and yields the `errored` outcome (Req 7).
+   */
+  reconcilePayment(
+    record: PaymentRecord,
+    params: ReconciliationParams,
+  ): Promise<ReconcilePaymentResult>;
+  /**
+   * Select and reconcile one batch of Stale Payment Records (Req 1, 2, 8).
+   * Fetches up to Batch Size records via `findStalePayments`, reconciles each
+   * in isolation (one record's failure never affects another, Req 7.4),
+   * accumulates and returns the Run Summary. A batch-level error (e.g. the
+   * selection query itself fails) rejects so the entrypoint can exit non-zero
+   * (Req 1.3).
+   */
+  reconcileBatch(
+    params: ReconciliationParams,
+  ): Promise<ReconciliationRunSummary>;
 }
 
 /**

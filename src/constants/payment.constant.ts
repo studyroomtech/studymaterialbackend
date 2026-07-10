@@ -44,6 +44,15 @@ export const PAISE_PER_RUPEE = 100;
 export const PAYMENT_STATUS_CREATED = 'created';
 export const PAYMENT_STATUS_SUCCESSFUL = 'successful';
 export const PAYMENT_STATUS_FAILED = 'failed';
+/**
+ * Terminal status the Payment Reconciliation Job assigns when Razorpay reports
+ * no captured payment for an order and the record has aged past the Fail-After
+ * Window. Kept distinct from `failed` (which denotes a verification/signature
+ * failure) so an audit can tell a genuine payment failure apart from a stale
+ * abandoned order the system swept up (Req 5.1).
+ */
+export const PAYMENT_STATUS_SYSTEM_CANCELLED_OLD_AGE =
+  'system_cancelled_due_to_old_age';
 
 /**
  * Grouped view of the supported Payment Status values for convenient,
@@ -53,6 +62,7 @@ export const PAYMENT_STATUS = {
   CREATED: PAYMENT_STATUS_CREATED,
   SUCCESSFUL: PAYMENT_STATUS_SUCCESSFUL,
   FAILED: PAYMENT_STATUS_FAILED,
+  SYSTEM_CANCELLED_OLD_AGE: PAYMENT_STATUS_SYSTEM_CANCELLED_OLD_AGE,
 } as const;
 
 /** The full set of Payment Status identifiers the Backend API recognizes. */
@@ -60,6 +70,7 @@ export const PAYMENT_STATUS_VALUES = [
   PAYMENT_STATUS_CREATED,
   PAYMENT_STATUS_SUCCESSFUL,
   PAYMENT_STATUS_FAILED,
+  PAYMENT_STATUS_SYSTEM_CANCELLED_OLD_AGE,
 ] as const;
 
 /** Grouped view of the Price bounds for convenient, type-safe access. */
