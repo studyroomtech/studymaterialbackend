@@ -5,7 +5,7 @@
   },
   "deploy": {
     "startCommand": "npm run reconcile",
-    "cronSchedule": "*/30 * * * *",
+    "cronSchedule": "0 * * * *",
     "restartPolicyType": "NEVER"
   },
   "variables": {

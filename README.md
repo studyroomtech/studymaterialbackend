@@ -27,7 +27,7 @@ Recommended configuration:
 
 | Setting              | Value                | Notes                                                                                     |
 | -------------------- | -------------------- | ----------------------------------------------------------------------------------------- |
-| `cronSchedule`       | `*/30 * * * *`       | Every 30 minutes. The 10-minute Grace Window ensures the job never races an in-flight verify. |
+| `cronSchedule`       | `0 * * * *`          | Every hour, on the hour. The 10-minute Grace Window ensures the job never races an in-flight verify. |
 | `startCommand`       | `npm run reconcile`  | Runs the compiled one-shot script; the process exits when the batch completes.            |
 | `restartPolicyType`  | `NEVER`              | A cron run should not be restarted on exit; Railway triggers the next run on schedule. A non-zero exit surfaces as a failed run. |
 | healthcheck          | _none_               | The job is not a long-running server, so there is no health endpoint to check.            |
