@@ -22,6 +22,12 @@ export const NAME_MAX_LENGTH = 100;
 export const EMAIL_MIN_LENGTH = 1;
 export const EMAIL_MAX_LENGTH = 254;
 
+// --- Account password ---
+// Password length bounds enforced when a Learner sets a password (Req 2.4) and
+// mirrored by the login schema's max bound (Req 4.3).
+export const PASSWORD_MIN_LENGTH = 8;
+export const PASSWORD_MAX_LENGTH = 128;
+
 // --- Study Material metadata ---
 export const TITLE_MIN_LENGTH = 1;
 export const TITLE_MAX_LENGTH = 200;

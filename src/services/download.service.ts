@@ -43,6 +43,7 @@ import {
   AuthRequiredError,
   InternalError,
   NotFoundError,
+  PasswordRequiredError,
   PaymentRequiredError,
   ValidationError,
 } from '../utils/errors';
@@ -53,6 +54,7 @@ import {
   getPresignedPreviewUrl,
 } from '../storage/storage.service';
 import { issueLearnerToken, verifyToken } from './token.service';
+import { verifyPassword } from './password.service';
 import { isPaidMaterial } from './material.service';
 import { isEntitled } from './entitlement.service';
 import * as downloadRepository from '../repositories/download.repository';
@@ -167,12 +169,33 @@ export function createDownloadService(
    * and email, upserts the User Record by email (reusing an existing record for
    * a known email — Req 6.4), and issues a learner Access Token whose lifetime
    * is exactly `ACCESS_TOKEN_TTL_SECONDS` (Req 6.5).
+   *
+   * When the email resolves to a Password-Protected Account (a stored Password
+   * Hash), a correct `password` MUST be supplied — otherwise a
+   * `PasswordRequiredError` (401) is thrown and no token is issued, so a
+   * protected account cannot be entered through the gate with only an email.
    */
   async function submitGate(
     rawName: string,
     rawEmail: string,
+    rawPassword?: string,
   ): Promise<DownloadGateResult> {
     const { name, email } = validateGateSubmission(rawName, rawEmail);
+
+    // Detect a Password-Protected Account before upserting: if a hash is stored
+    // the supplied password must verify against it (a missing, empty, or wrong
+    // password is rejected identically).
+    const existing = await users.findUserByEmail(email);
+    const storedHash = existing?.passwordHash ?? null;
+    if (storedHash !== null) {
+      const password = typeof rawPassword === 'string' ? rawPassword : '';
+      const verified =
+        password.length > 0 && (await deps.verifyPassword(password, storedHash));
+      if (!verified) {
+        throw new PasswordRequiredError();
+      }
+    }
+
     const user = await users.upsertUserByEmail(email, name);
     const accessToken = deps.issueLearnerToken(user.id, user.email);
     return {
@@ -338,6 +361,7 @@ export function createDefaultDownloadService(): DownloadService {
   return createDownloadService({
     users: {
       upsertUserByEmail: userRepository.upsertUserByEmail,
+      findUserByEmail: userRepository.findUserByEmail,
       findUserById: userRepository.findUserById,
     },
     materials: {
@@ -350,6 +374,7 @@ export function createDefaultDownloadService(): DownloadService {
       findEntitlement: entitlementRepository.findEntitlement,
     },
     issueLearnerToken,
+    verifyPassword,
     verifyToken,
     getPresignedDownloadUrl,
     getPresignedPreviewUrl,

@@ -23,6 +23,12 @@ import type { EntitlementRef } from './entitlement.service.types';
 export interface DownloadUserRecord {
   id: string;
   email: string;
+  /**
+   * The stored Password Hash, or `null` for an Unprotected Account. When set,
+   * the Download Gate requires a matching Password before issuing a token so a
+   * protected account cannot be entered with only an email.
+   */
+  passwordHash?: string | null;
 }
 
 /**
@@ -67,6 +73,11 @@ export interface DownloadRecord {
 export interface DownloadUserRepository {
   /** Upsert a User Record by its unique email, returning the record (Req 6.4). */
   upsertUserByEmail(email: string, name: string): Promise<DownloadUserRecord>;
+  /**
+   * Load a User Record by its unique email, or `null` when none exists, so the
+   * Download Gate can detect a Password-Protected Account before upserting.
+   */
+  findUserByEmail(email: string): Promise<DownloadUserRecord | null>;
   /** Load a User Record by id, or `null` when none exists (Req 6.6). */
   findUserById(id: string): Promise<DownloadUserRecord | null>;
 }
@@ -123,6 +134,12 @@ export interface DownloadServiceDeps {
   entitlements: DownloadEntitlementRepository;
   /** Issue a signed learner Access Token bound to the user id + email (Req 6.5). */
   issueLearnerToken(userId: string, email: string): string;
+  /**
+   * Verify a candidate Password against a stored Password Hash in constant
+   * time, returning `false` for a wrong or malformed hash. Used by the Download
+   * Gate to guard a Password-Protected Account.
+   */
+  verifyPassword(plaintext: string, encodedHash: string): Promise<boolean>;
   /** Verify a token, returning its claims or `null` when invalid/expired (Req 6.6, 6.7). */
   verifyToken(token: string): AccessTokenClaims | null;
   /** Mint a short-lived presigned GET URL for the object (Req 6.8). */
@@ -180,8 +197,14 @@ export interface DownloadService {
   /**
    * Validate a Download Gate submission (name 1–100, email 1–254 + format),
    * upsert the User Record by email, and issue an Access Token (Req 6.2–6.5).
+   * When the email resolves to a Password-Protected Account, a correct
+   * `password` must be supplied or a `PasswordRequiredError` (401) is thrown.
    */
-  submitGate(name: string, email: string): Promise<DownloadGateResult>;
+  submitGate(
+    name: string,
+    email: string,
+    password?: string,
+  ): Promise<DownloadGateResult>;
   /**
    * Resolve the Learner from an Access Token, confirm the Study Material
    * exists, record the download with an ISO 8601 timestamp, and return a

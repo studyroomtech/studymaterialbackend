@@ -84,6 +84,21 @@ export class AuthRequiredError extends AppError {
 }
 
 /**
+ * The submitted email resolves to a Password-Protected Account and the correct
+ * Password was not supplied at the Download Gate. Maps to `PASSWORD_REQUIRED`
+ * (401) — distinct from `AUTH_REQUIRED` so the Frontend can reveal the password
+ * field and prompt the Learner to enter their password rather than treating it
+ * as an expired session.
+ */
+export class PasswordRequiredError extends AppError {
+  constructor(
+    message = 'This account is protected. Enter your password to continue.',
+  ) {
+    super(ERROR_CODES.PASSWORD_REQUIRED, 401, message);
+  }
+}
+
+/**
  * The caller is authenticated but not authorized for the requested action —
  * for example a role_common caller attempting a Content Management Action
  * (Req 10.7). Maps to `FORBIDDEN` (403).

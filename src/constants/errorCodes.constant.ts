@@ -26,6 +26,13 @@
 
 export const VALIDATION_ERROR = 'VALIDATION_ERROR';
 export const AUTH_REQUIRED = 'AUTH_REQUIRED';
+/**
+ * The submitted email resolves to a Password-Protected Account, so a correct
+ * Password must be supplied before the Download Gate can issue a token. Distinct
+ * from AUTH_REQUIRED so the Frontend can reveal the password field and prompt
+ * the Learner to enter their password (401).
+ */
+export const PASSWORD_REQUIRED = 'PASSWORD_REQUIRED';
 export const FORBIDDEN = 'FORBIDDEN';
 export const NOT_FOUND = 'NOT_FOUND';
 export const INTERNAL_ERROR = 'INTERNAL_ERROR';
@@ -40,6 +47,7 @@ export const TOO_MANY_REQUESTS = 'TOO_MANY_REQUESTS';
 export const ERROR_CODES = {
   VALIDATION_ERROR,
   AUTH_REQUIRED,
+  PASSWORD_REQUIRED,
   FORBIDDEN,
   NOT_FOUND,
   INTERNAL_ERROR,

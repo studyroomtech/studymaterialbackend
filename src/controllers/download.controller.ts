@@ -50,8 +50,16 @@ export async function submitGateHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { name, email } = req.body as { name: string; email: string };
-    const result = await createDefaultDownloadService().submitGate(name, email);
+    const { name, email, password } = req.body as {
+      name: string;
+      email: string;
+      password?: string;
+    };
+    const result = await createDefaultDownloadService().submitGate(
+      name,
+      email,
+      password,
+    );
     const body: DownloadGateResponse = {
       accessToken: result.accessToken,
       expiresInSeconds: result.expiresInSeconds,

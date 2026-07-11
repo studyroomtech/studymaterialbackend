@@ -39,3 +39,16 @@ export function findUserByEmail(email: string): Promise<User | null> {
 export function findUserById(id: string): Promise<User | null> {
   return getPrismaClient().user.findUnique({ where: { id } });
 }
+
+/**
+ * Persist a new Password Hash on a User Record (Req 2.1), returning the updated
+ * record. Overwrites any existing hash; the caller (Account Service) is
+ * responsible for verifying the current Password before changing a
+ * Password-Protected Account.
+ */
+export function setUserPasswordHash(id: string, passwordHash: string): Promise<User> {
+  return getPrismaClient().user.update({
+    where: { id },
+    data: { passwordHash },
+  });
+}

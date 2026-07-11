@@ -33,6 +33,7 @@ import {
   EMAIL_MIN_LENGTH,
   NAME_MAX_LENGTH,
   NAME_MIN_LENGTH,
+  PASSWORD_MAX_LENGTH,
 } from '../constants/limits.constant';
 import { authMiddleware } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validate.middleware';
@@ -50,6 +51,10 @@ const gateBodySchema = z.object({
     .min(EMAIL_MIN_LENGTH)
     .max(EMAIL_MAX_LENGTH)
     .email(),
+  // Optional: supplied only when the account is Password-Protected. No minimum
+  // is enforced here so an under-/over-length password is treated as a failed
+  // password (PASSWORD_REQUIRED) rather than a VALIDATION_ERROR.
+  password: z.string().max(PASSWORD_MAX_LENGTH).optional(),
 });
 
 /**

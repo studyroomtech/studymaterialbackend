@@ -106,11 +106,18 @@ export interface PreviewResponse {
 
 /**
  * `POST /api/account/login` request — a name + email learner sign-in (Req 6.2,
- * 6.3).
+ * 6.3). An optional `password` may be supplied; its presence triggers
+ * password-protected verification against the resolved account (Req 3, 4).
  */
 export interface AccountLoginRequest {
   name: string;
   email: string;
+  /**
+   * Optional password. When present, the account is authenticated against its
+   * stored password hash; when absent, an Unprotected Account signs in as
+   * before (Req 3, 4).
+   */
+  password?: string;
 }
 
 /**
@@ -125,6 +132,30 @@ export interface AccountLoginResponse {
   email: string;
   /** The Roles held by the signed-in User Record (from `User.roles`). */
   roles: string[];
+  /**
+   * The account's protection status — present only on a successful sign-in so
+   * that no failed sign-in can reveal whether the account is protected
+   * (Req 3.3, 7.4).
+   */
+  passwordProtected: boolean;
+}
+
+/**
+ * `POST /api/account/password` request — set (first time) or change a
+ * Learner's password. `currentPassword` is required only when changing an
+ * existing password on a Password-Protected Account (Req 2.6).
+ */
+export interface SetPasswordRequest {
+  newPassword: string;
+  currentPassword?: string;
+}
+
+/**
+ * `POST /api/account/password` response — the account is Password-Protected
+ * after a successful set (Req 2.1).
+ */
+export interface SetPasswordResponse {
+  passwordProtected: true;
 }
 
 /**
