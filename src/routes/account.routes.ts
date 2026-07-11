@@ -21,6 +21,7 @@ import { z } from 'zod';
 
 import {
   accountLoginHandler,
+  accountMeHandler,
   setPasswordHandler,
 } from '../controllers/account.controller';
 import {
@@ -75,6 +76,7 @@ accountRouter.post(
   validate({ body: accountLoginBodySchema }),
   accountLoginHandler,
 );
+accountRouter.get('/account/me', accountMeHandler);
 accountRouter.post(
   '/account/password',
   validate({ body: setPasswordBodySchema }),

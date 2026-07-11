@@ -100,6 +100,19 @@ export interface AccountLoginResult {
 }
 
 /**
+ * The current signed-in account's public profile, derived from the DB so the
+ * Frontend has an authoritative protection status (rather than a possibly-stale
+ * client-persisted value). Never includes the stored Password Hash (Req 6.4).
+ */
+export interface AccountProfile {
+  name: string;
+  email: string;
+  roles: string[];
+  /** `true` => Password-Protected Account; `false` => Unprotected Account. */
+  passwordProtected: boolean;
+}
+
+/**
  * Input to `setPassword`: the signed-in User Record id, the new plaintext
  * Password to store, and the current Password — required only when changing an
  * existing Password on a Password-Protected Account (Req 2.6).
@@ -134,4 +147,11 @@ export interface AccountService {
     password?: string,
   ): Promise<AccountLoginResult>;
   setPassword(input: SetPasswordInput): Promise<SetPasswordResult>;
+  /**
+   * Resolve the signed-in User Record's public profile (name, email, roles, and
+   * the authoritative `passwordProtected` status) from the DB, or throw
+   * `AuthRequiredError` (401) when the id no longer resolves. Lets the Frontend
+   * reconcile its cached protection status with the source of truth.
+   */
+  getAccount(userId: string): Promise<AccountProfile>;
 }

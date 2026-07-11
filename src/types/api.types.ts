@@ -159,6 +159,19 @@ export interface SetPasswordResponse {
 }
 
 /**
+ * `GET /api/account/me` response — the signed-in Learner's profile and the
+ * authoritative `passwordProtected` status derived from the DB, so the Frontend
+ * can reconcile its cached protection state with the source of truth. Never
+ * includes the stored `passwordHash` (Req 6.4).
+ */
+export interface AccountMeResponse {
+  name: string;
+  email: string;
+  roles: string[];
+  passwordProtected: boolean;
+}
+
+/**
  * `POST /api/admin/login` request — admin credentials (Req 10.5).
  */
 export interface AdminLoginRequest {

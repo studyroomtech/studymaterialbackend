@@ -36,6 +36,7 @@ import { hashPassword, verifyPassword } from './password.service';
 import * as userRepository from '../repositories/user.repository';
 import type {
   AccountLoginResult,
+  AccountProfile,
   AccountService,
   AccountServiceDeps,
   SetPasswordInput,
@@ -244,7 +245,30 @@ export function createAccountService(deps: AccountServiceDeps): AccountService {
     return { passwordProtected: true };
   }
 
-  return { login, setPassword };
+  /**
+   * Resolve the signed-in User Record's public profile from the DB, giving the
+   * Frontend an authoritative `passwordProtected` status instead of relying on
+   * a client-persisted value that can drift. Throws `AuthRequiredError` (401)
+   * when the id no longer resolves. The stored Password Hash is never returned
+   * (Req 6.4) — only the boolean protection status derived from it.
+   */
+  async function getAccount(userId: string): Promise<AccountProfile> {
+    const user = await users.findUserById(userId);
+    if (user === null) {
+      throw new AuthRequiredError(AUTH_FAILED_MESSAGE);
+    }
+    const storedHash = user.passwordHash;
+    const passwordProtected =
+      typeof storedHash === 'string' && storedHash.length > 0;
+    return {
+      name: user.name,
+      email: user.email,
+      roles: user.roles,
+      passwordProtected,
+    };
+  }
+
+  return { login, setPassword, getAccount };
 }
 
 /**

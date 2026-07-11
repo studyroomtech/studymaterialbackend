@@ -28,6 +28,7 @@ import { createDefaultAccountService } from '../services/account.service';
 import { AuthRequiredError } from '../utils/errors';
 import type {
   AccountLoginResponse,
+  AccountMeResponse,
   SetPasswordRequest,
   SetPasswordResponse,
 } from '../types/api.types';
@@ -93,6 +94,37 @@ export async function setPasswordHandler(
       currentPassword,
     });
     const body: SetPasswordResponse = { passwordProtected: true };
+    res.status(200).json(body);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * `GET /api/account/me` — return the signed-in Learner's profile (name, email,
+ * roles) and the authoritative `passwordProtected` status derived from the DB,
+ * so the Frontend can reconcile its cached protection state with the source of
+ * truth. The authenticated identity comes from `req.auth.userId`; an absent
+ * identity is rejected with `AUTH_REQUIRED` (401). The stored `passwordHash` is
+ * never included in the response (Req 6.4).
+ */
+export async function accountMeHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const userId = req.auth.userId;
+    if (userId === undefined) {
+      throw new AuthRequiredError();
+    }
+    const profile = await createDefaultAccountService().getAccount(userId);
+    const body: AccountMeResponse = {
+      name: profile.name,
+      email: profile.email,
+      roles: profile.roles,
+      passwordProtected: profile.passwordProtected,
+    };
     res.status(200).json(body);
   } catch (error) {
     next(error);
