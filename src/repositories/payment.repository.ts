@@ -13,6 +13,7 @@ import { PAYMENT_STATUS } from '../constants/payment.constant';
 import { getPrismaClient } from './prismaClient';
 import type {
   CreatePaymentInput,
+  CreateProductPaymentInput,
   FindStalePaymentsInput,
   UpdatePaymentStatusInput,
 } from './payment.repository.types';
@@ -35,9 +36,39 @@ export function createPayment(input: CreatePaymentInput): Promise<Payment> {
 }
 
 /**
+ * Persist a newly initiated product-cart Payment Record with status `created`
+ * (Req 7.1, 7.2). Unlike {@link createPayment}, this covers a cart of Tests
+ * and/or Sectional Tests: `testIds`/`sectionIds` carry the covered products
+ * (paise-priced) while `studyMaterialIds` is left empty. The status defaults to
+ * `created` via the schema; `currency` is omitted from the write when not
+ * supplied so the schema default (`INR`) applies. The covered `testIds`/
+ * `sectionIds` are returned on the persisted record and later read back by the
+ * verify/webhook grant path (via {@link findPaymentByRazorpayOrderId}) to grant
+ * one Entitlement per covered product.
+ */
+export function createProductPayment(
+  input: CreateProductPaymentInput
+): Promise<Payment> {
+  return getPrismaClient().payment.create({
+    data: {
+      userId: input.userId,
+      studyMaterialIds: [],
+      testIds: input.testIds,
+      sectionIds: input.sectionIds,
+      amount: input.amount,
+      ...(input.currency !== undefined ? { currency: input.currency } : {}),
+      razorpayOrderId: input.razorpayOrderId,
+    },
+  });
+}
+
+/**
  * Find a Payment Record by its unique Razorpay Order Identifier, or `null` when
  * none exists. Backs Payment Signature Verification, which resolves the Payment
  * Record first and treats a missing record as verification failure (Req 12.18).
+ * The returned record carries the covered product refs (`studyMaterialIds`,
+ * `testIds`, `sectionIds`) so the verify/webhook grant path can grant one
+ * Entitlement per covered product (Req 7.2).
  */
 export function findPaymentByRazorpayOrderId(
   razorpayOrderId: string

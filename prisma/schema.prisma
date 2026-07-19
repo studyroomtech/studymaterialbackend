@@ -32,6 +32,7 @@ model User {
   downloads    Download[]
   payments     Payment[]
   entitlements Entitlement[]
+  testAttempts TestAttempt[]
 
   @@index([email])
 }
@@ -85,6 +86,8 @@ model Payment {
   id                String        @id @default(cuid())
   userId            String
   studyMaterialIds  String[] // the Paid Materials this Payment covers (a cart)
+  testIds           String[]      @default([]) // Test products covered by this Payment (paise)
+  sectionIds        String[]      @default([]) // Sectional Test products covered (paise)
   amount            Int // total charged amount in smallest currency unit (paise)
   currency          String        @default("INR")
   razorpayOrderId   String        @unique // one Payment per Razorpay order
@@ -100,18 +103,26 @@ model Payment {
 }
 
 model Entitlement {
-  id              String        @id @default(cuid())
+  id              String         @id @default(cuid())
   userId          String
-  studyMaterialId String
+  studyMaterialId String? // widened to nullable (retains all existing values)
+  testId          String? // set for a Test Entitlement (Req 8.1)
+  sectionId       String? // set for a Section Entitlement (Req 8.2)
   paymentId       String // the successful Payment that granted access (one Payment → many)
-  createdAt       DateTime      @default(now())
-  user            User          @relation(fields: [userId], references: [id])
-  studyMaterial   StudyMaterial @relation(fields: [studyMaterialId], references: [id])
-  payment         Payment       @relation(fields: [paymentId], references: [id])
+  createdAt       DateTime       @default(now())
+  user            User           @relation(fields: [userId], references: [id])
+  studyMaterial   StudyMaterial? @relation(fields: [studyMaterialId], references: [id])
+  test            Test?          @relation(fields: [testId], references: [id])
+  section         Section?       @relation(fields: [sectionId], references: [id])
+  payment         Payment        @relation(fields: [paymentId], references: [id])
 
   @@unique([userId, studyMaterialId]) // at most one entitlement per (user, material) (Req 12.8, 12.11)
+  @@unique([userId, testId]) // ≤1 Test Entitlement per (user, test) (Req 7.8)
+  @@unique([userId, sectionId]) // ≤1 Section Entitlement per (user, section) (Req 7.8)
   @@index([userId])
   @@index([studyMaterialId])
+  @@index([testId])
+  @@index([sectionId])
   @@index([paymentId])
 }
 
@@ -138,4 +149,141 @@ model Download {
   @@index([userId])
   @@index([studyMaterialId])
   @@index([downloadedAt])
+}
+
+// ── Test Series ──────────────────────────────────────────────────────────────
+// New models for the Test Series feature. Marks are stored as integer
+// centi-marks (1 mark = 100); money as integer paise (Test-series prices are NOT
+// multiplied by PAISE_PER_RUPEE). Timing is server-authoritative via
+// accumulatedActiveSeconds + lastResumedAt.
+// Requirements: 2.1, 2.2, 2.3, 2.6, 3.1, 3.2, 3.6, 4.1, 9.1, 12.2, 13.5
+
+enum TestTimingMode {
+  overall
+  sectional
+}
+
+enum AttemptStatus {
+  in_progress
+  paused
+  completed
+}
+
+model Test {
+  id               String         @id @default(cuid())
+  title            String // 1–200 chars (app-validated, Req 2.1)
+  timingMode       TestTimingMode // exactly overall | sectional (Req 2.2)
+  timeLimitSeconds Int // overall Time Limit, positive whole seconds (Req 2.1)
+  priceAmount      Int? // paise; null/0 => free Test (Req 2.3, 2.4). NOT rupees (R4)
+  currency         String         @default("INR")
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  sections         Section[]
+  attempts         TestAttempt[]
+  entitlements     Entitlement[]
+
+  @@index([createdAt]) // deterministic listing order (Req 6.4)
+}
+
+model Section {
+  id                String           @id @default(cuid())
+  testId            String
+  test              Test             @relation(fields: [testId], references: [id], onDelete: Cascade)
+  title             String
+  orderIndex        Int // Admin-defined order within the Test (Req 2.6)
+  timeLimitSeconds  Int // positive whole seconds (Req 3.1)
+  correctMarkCenti  Int // non-negative centi-marks (Req 3.1, R3)
+  negativeMarkCenti Int // non-negative centi-marks (Req 3.1, R3)
+  priceAmount       Int? // paise; positive => Sectional Test product (Req 3.2–3.4)
+  currency          String           @default("INR")
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  questions         Question[]
+  sectionAttempts   SectionAttempt[]
+  entitlements      Entitlement[]
+
+  @@unique([testId, orderIndex]) // stable, gap-checked ordering within a Test
+  @@index([testId])
+}
+
+model Question {
+  id         String     @id @default(cuid())
+  sectionId  String
+  section    Section    @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  text       String // 1–2000 chars (Req 4.1)
+  orderIndex Int // Admin-defined order within the Section (Req 3.6)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  options    Option[]
+  responses  Response[]
+
+  @@unique([sectionId, orderIndex])
+  @@index([sectionId])
+}
+
+model Option {
+  id         String   @id @default(cuid())
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  text       String // 1–1000 chars (Req 4.1)
+  isCorrect  Boolean // Correct Option Set = options where isCorrect (Req 4.1, 4.2)
+  orderIndex Int
+
+  @@unique([questionId, orderIndex])
+  @@index([questionId])
+}
+
+model TestAttempt {
+  id                       String           @id @default(cuid())
+  userId                   String
+  testId                   String
+  // For a Section-scoped attempt (bought via a Section Entitlement), the single
+  // Section it covers; null for a whole-Test attempt (Req 8.1, 8.2).
+  scopedSectionId          String?
+  status                   AttemptStatus    @default(in_progress)
+  startedAt                DateTime // Start Timestamp, first in_progress (Req 9.1)
+  // Overall-Timing accumulation (unused fields stay at defaults for Sectional).
+  accumulatedActiveSeconds Int              @default(0)
+  lastResumedAt            DateTime? // instant current in_progress interval began; null when paused/completed
+  scoreCentimarks          Int? // computed on completion (Req 13.5)
+  completedAt              DateTime?
+  createdAt                DateTime         @default(now())
+  updatedAt                DateTime         @updatedAt
+  user                     User             @relation(fields: [userId], references: [id])
+  test                     Test             @relation(fields: [testId], references: [id])
+  sectionAttempts          SectionAttempt[]
+  responses                Response[]
+
+  @@index([userId, testId])
+  @@index([userId, status])
+}
+
+model SectionAttempt {
+  id                       String        @id @default(cuid())
+  testAttemptId            String
+  sectionId                String
+  status                   AttemptStatus @default(in_progress)
+  startedAt                DateTime? // recorded on first in_progress (Req 12.2)
+  accumulatedActiveSeconds Int           @default(0)
+  lastResumedAt            DateTime?
+  completedAt              DateTime?
+  testAttempt              TestAttempt   @relation(fields: [testAttemptId], references: [id], onDelete: Cascade)
+  section                  Section       @relation(fields: [sectionId], references: [id])
+
+  @@unique([testAttemptId, sectionId]) // one Section Attempt per Section per attempt
+  @@index([testAttemptId])
+}
+
+model Response {
+  id                String      @id @default(cuid())
+  testAttemptId     String
+  questionId        String
+  selectedOptionIds String[] // the Learner's selected Option set (Req 9.4)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  testAttempt       TestAttempt @relation(fields: [testAttemptId], references: [id], onDelete: Cascade)
+  question          Question    @relation(fields: [questionId], references: [id])
+
+  @@unique([testAttemptId, questionId]) // one Response per Question per attempt (upsert on re-answer)
+  @@index([testAttemptId])
 }

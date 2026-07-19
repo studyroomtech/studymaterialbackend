@@ -36,12 +36,14 @@ import { getEnv } from './config/env';
 import { errorHandler } from './middleware/errorHandler.middleware';
 import { rateLimit } from './middleware/rateLimit.middleware';
 import { createAdminRouter } from './routes/admin.routes';
+import { createAdminTestSeriesRouter } from './routes/adminTestSeries.routes';
 import accountRouter from './routes/account.routes';
 import catalogRouter from './routes/catalog.routes';
 import downloadsRouter from './routes/downloads.routes';
 import filesRouter from './routes/files.routes';
 import materialsRouter from './routes/materials.routes';
 import paymentsRouter from './routes/payments.routes';
+import testSeriesRouter from './routes/testSeries.routes';
 
 // The Razorpay webhook path whose raw body must reach `express.raw` unparsed.
 const WEBHOOK_PATH = '/api/payments/webhook';
@@ -106,11 +108,18 @@ export function createApp(): Express {
   app.use('/api', downloadsRouter);
   app.use('/api', paymentsRouter);
   app.use('/api', accountRouter);
+  // Learner Test Series surface — Home Page listings and the attempt lifecycle
+  // (each route resolves the caller via the router's own authMiddleware).
+  app.use('/api', testSeriesRouter);
   // Local-mode download route (`GET /api/files/*`); unused in hosted mode.
   app.use('/api', filesRouter);
 
   // Admin API surface — Content Management Actions behind requireAdmin.
   app.use('/api/admin', createAdminRouter());
+  // Admin Test-series authoring surface — Test/Section/Question authoring behind
+  // authMiddleware + requireAdmin (attached inside the router). Its paths are
+  // relative to `/api` (e.g. `POST /api/admin/tests`), so it mounts at `/api`.
+  app.use('/api', createAdminTestSeriesRouter());
 
   // Central error handler — MUST be registered after all routes so both thrown
   // and next(err)-forwarded errors are mapped to the unified envelope (Req 8.4).

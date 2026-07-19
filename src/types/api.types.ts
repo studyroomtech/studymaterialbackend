@@ -10,6 +10,8 @@ import type {
   CategoryTypeDto,
   MaterialDto,
   PaymentStatus,
+  SectionalTestListingDto,
+  TestSeriesListingDto,
 } from './domain.types';
 
 /**
@@ -45,6 +47,17 @@ export interface ApiErrorResponse {
 export interface CatalogResponse {
   categoryTypes: CategoryTypeDto[];
   materials: MaterialDto[];
+}
+
+/**
+ * `GET /api/tests` — the Home Page test listings (Req 6.1–6.4). Carries the
+ * Test Series list (every Test, including free) and the Sectional Tests list
+ * (only Sections whose Price amount is present and positive), each in the
+ * deterministic `createdAt asc, id asc` order the service preserves.
+ */
+export interface TestListingsResponse {
+  testSeries: TestSeriesListingDto[];
+  sectionalTests: SectionalTestListingDto[];
 }
 
 /**

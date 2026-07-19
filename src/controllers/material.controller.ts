@@ -17,6 +17,7 @@
 
 import type { NextFunction, Request, Response } from 'express';
 
+import { ROLE_ADMIN } from '../constants/roles.constant';
 import { createDefaultMaterialService } from '../services/material.service';
 import { searchMaterials } from '../services/search.service';
 import { loadCatalog } from './catalog.controller';
@@ -69,6 +70,11 @@ export async function searchMaterialsHandler(
  * Entitlement — an unentitled/unauthenticated caller receives a
  * `403 PAYMENT_REQUIRED` with no content. Free Materials are unaffected
  * (Req 12.2, 12.3).
+ *
+ * A caller holding `role_admin` (the effective Role resolved onto `req.auth` by
+ * `auth.middleware`) is granted access to any Study Material regardless of Price
+ * without an Entitlement or Payment; the admin flag is passed through so the
+ * service skips the entitlement gate (Req 17.2, 17.4).
  */
 export async function getMaterialHandler(
   req: Request,
@@ -79,6 +85,7 @@ export async function getMaterialHandler(
     const material = await createDefaultMaterialService().getMaterial(
       req.params.id,
       req.auth.userId,
+      req.auth.role === ROLE_ADMIN,
     );
     // Return the material unwrapped (fields at top level) as documented for
     // this endpoint, so the Frontend Project consumes it directly.

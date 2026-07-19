@@ -38,6 +38,10 @@ import { classifyPrice } from '../services/price.service';
 import { DEFAULT_CURRENCY } from '../constants/payment.constant';
 import type { MaterialWithTags } from '../repositories/material.repository.types';
 import type {
+  ProductOrderResult,
+  ProductRef,
+} from '../services/payment.service.types';
+import type {
   PaidMaterialDto,
   PaidMaterialsResponse,
   PaymentInitiateResponse,
@@ -186,6 +190,36 @@ export async function initiateCartPaymentHandler(
       studyMaterialIds: order.studyMaterialIds,
     };
     res.status(200).json(body);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * `POST /api/payments/initiate-products` — initiate a Payment for a cart of
+ * Test/Sectional-Test products (Req 7.1, 17.5). The body carries the
+ * `products` (a `ProductRef[]` of `{ type, id }`, validated in the route by Zod
+ * — task 10.3); the service resolves the Learner, rejects an admin caller with
+ * a 422 before any product resolution (Req 17.5), enforces the cart / free /
+ * already-entitled / single-currency preconditions, sums the paise Prices into
+ * one Razorpay order, and persists one Payment Record covering the products'
+ * `testIds`/`sectionIds`. Returns the resulting `ProductOrderResult`; thrown
+ * `AppError`s are forwarded via `next(error)`.
+ */
+export async function initiateProductPaymentHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const token = extractBearerToken(req.headers.authorization);
+    const { products } = req.body as { products: ProductRef[] };
+    const order: ProductOrderResult =
+      await createDefaultPaymentService().initiateProductPayment(
+        token,
+        products,
+      );
+    res.status(200).json(order);
   } catch (error) {
     next(error);
   }

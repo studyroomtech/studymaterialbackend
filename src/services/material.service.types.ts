@@ -226,6 +226,15 @@ export interface MaterialService {
    * no content is returned (Req 12.2, 12.3). Free Materials are unaffected and
    * returned without an entitlement check. A missing material yields a
    * not-found error (Req 5.4).
+   *
+   * When `isAdmin` is true (the caller holds `role_admin`), access is granted to
+   * any Study Material regardless of Price without evaluating the entitlement
+   * gate and without creating or modifying any Entitlement/Payment record
+   * (Req 17.2, 17.4).
    */
-  getMaterial(id: string, userId?: string | null): Promise<MaterialDto>;
+  getMaterial(
+    id: string,
+    userId?: string | null,
+    isAdmin?: boolean,
+  ): Promise<MaterialDto>;
 }

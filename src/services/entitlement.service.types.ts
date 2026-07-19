@@ -15,6 +15,10 @@
 export interface EntitlementRef {
   /** The User Record the Entitlement was granted to. */
   userId: string;
-  /** The Paid Material the Entitlement grants access to. */
-  studyMaterialId: string;
+  /**
+   * The Paid Material the Entitlement grants access to, or `null` for a
+   * non-study-material Entitlement (e.g. a Test/Section grant). A `null` value
+   * never matches a study-material id in the membership check.
+   */
+  studyMaterialId: string | null;
 }

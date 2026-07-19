@@ -28,9 +28,14 @@ import { z } from 'zod';
 import {
   initiateCartPaymentHandler,
   initiatePaymentHandler,
+  initiateProductPaymentHandler,
   razorpayWebhookHandler,
   verifyPaymentHandler,
 } from '../controllers/payment.controller';
+import {
+  PRODUCT_CART_MAX_ITEMS,
+  PRODUCT_CART_MIN_ITEMS,
+} from '../constants/limits.constant';
 import { authMiddleware } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validate.middleware';
 
@@ -48,6 +53,25 @@ const paymentParamsSchema = z.object({
  */
 const cartInitiateBodySchema = z.object({
   studyMaterialIds: z.array(z.string().min(1)).min(1),
+});
+
+/**
+ * Body schema for `POST /api/payments/initiate-products` — a cart of 1–50
+ * Test/Sectional-Test product references to check out. Each ref names a product
+ * `type` (`test` | `section`) and a non-empty `id`; the service enforces the
+ * remaining cart rules (no duplicates, all Paid, not already entitled)
+ * (Req 7.1, 7.6).
+ */
+const productInitiateBodySchema = z.object({
+  products: z
+    .array(
+      z.object({
+        type: z.enum(['test', 'section']),
+        id: z.string().min(1),
+      }),
+    )
+    .min(PRODUCT_CART_MIN_ITEMS)
+    .max(PRODUCT_CART_MAX_ITEMS),
 });
 
 /**
@@ -84,6 +108,13 @@ paymentsRouter.post(
   authMiddleware,
   validate({ body: cartInitiateBodySchema }),
   initiateCartPaymentHandler,
+);
+
+paymentsRouter.post(
+  '/payments/initiate-products',
+  authMiddleware,
+  validate({ body: productInitiateBodySchema }),
+  initiateProductPaymentHandler,
 );
 
 paymentsRouter.post(

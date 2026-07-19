@@ -37,12 +37,16 @@
 
 import RazorpaySdk from "razorpay";
 
-import { ROLE_COMMON } from "../constants/roles.constant";
+import { ROLE_ADMIN, ROLE_COMMON } from "../constants/roles.constant";
 import {
   DEFAULT_CURRENCY,
   PAISE_PER_RUPEE,
   PAYMENT_STATUS,
 } from "../constants/payment.constant";
+import {
+  PRODUCT_CART_MAX_ITEMS,
+  PRODUCT_CART_MIN_ITEMS,
+} from "../constants/limits.constant";
 import {
   AuthRequiredError,
   AlreadyEntitledError,
@@ -50,6 +54,7 @@ import {
   NotFoundError,
   PaymentNotRequiredError,
   PaymentVerificationFailedError,
+  ValidationError,
   WebhookVerificationFailedError,
 } from "../utils/errors";
 import { logError, logInfo } from "../utils/logger";
@@ -63,6 +68,7 @@ import { verifyToken } from "./token.service";
 import * as paymentRepository from "../repositories/payment.repository";
 import * as entitlementRepository from "../repositories/entitlement.repository";
 import * as materialRepository from "../repositories/material.repository";
+import * as testSeriesRepository from "../repositories/testSeries.repository";
 import * as userRepository from "../repositories/user.repository";
 import { WEBHOOK_EVENT_PAYMENT_CAPTURED } from "./payment.service.constant";
 import type { PaymentSignatureInput } from "./razorpay.service.types";
@@ -73,6 +79,8 @@ import type {
   PaymentService,
   PaymentServiceDeps,
   PaymentVerifyResult,
+  ProductOrderResult,
+  ProductRef,
   ReconciliationParams,
   ReconciliationRunSummary,
   ReconcilePaymentResult,
@@ -136,23 +144,48 @@ export function parseWebhookEvent(
  * `createDefaultPaymentService`).
  */
 export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
-  const { payments, entitlements, materials, users } = deps;
+  const { payments, entitlements, materials, users, products } = deps;
+
+  /**
+   * Whether the resolved token claims belong to a caller holding `role_admin` —
+   * either a pure admin Access Token (`role === role_admin`) or a learner token
+   * whose `roles` claim was elevated to include `role_admin` (Req 17.1, 17.5).
+   */
+  function callerHoldsAdmin(claims: { role: string }): boolean {
+    if (claims.role === ROLE_ADMIN) {
+      return true;
+    }
+    const roles = (claims as { roles?: unknown }).roles;
+    return Array.isArray(roles) && roles.includes(ROLE_ADMIN);
+  }
 
   /**
    * Resolve the Learner's User Record from a learner Access Token, or throw a
    * 401 so the frontend re-shows the Download Gate to collect a valid email
-   * (Req 6.10). An admin token, a missing/invalid/expired token, or a token
-   * whose User Record no longer resolves all fail closed.
+   * (Req 6.10). A caller holding `role_admin` is rejected with 422
+   * PAYMENT_NOT_REQUIRED — an admin never needs to purchase (Req 17.5) — BEFORE
+   * any product/material resolution or amount computation. A missing/invalid/
+   * expired token, or a token whose User Record no longer resolves, fails closed
+   * with a 401.
    */
   async function resolveLearner(
     token: string,
   ): Promise<{ id: string; email: string }> {
     const claims = deps.verifyToken(token);
-    if (
-      claims === null ||
-      claims.role !== ROLE_COMMON ||
-      typeof claims.sub !== "string"
-    ) {
+    if (claims === null || typeof claims.sub !== "string") {
+      throw new AuthRequiredError(
+        "A valid email is required to initiate a Payment.",
+      );
+    }
+    // Admin-rejection guard (Req 17.5): reject an admin caller with 422 before
+    // any further work — no order, Payment, or Entitlement is created and the
+    // caller's existing records are left unchanged.
+    if (callerHoldsAdmin(claims)) {
+      throw new PaymentNotRequiredError(
+        "An administrator already has access and does not need to purchase this product.",
+      );
+    }
+    if (claims.role !== ROLE_COMMON) {
       throw new AuthRequiredError(
         "A valid email is required to initiate a Payment.",
       );
@@ -267,6 +300,235 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
   }
 
   /**
+   * Initiate a Payment for a cart of Test / Sectional Test product refs
+   * (Req 7.1–7.8, 17.5).
+   *
+   * Enforces every precondition BEFORE creating a Razorpay order, in this order:
+   *   1. resolve the caller — 401 when none resolves (Req 7.3); a `role_admin`
+   *      caller is rejected with 422 PAYMENT_NOT_REQUIRED by `resolveLearner`,
+   *      before any product resolution or amount computation (Req 17.5);
+   *   2. validate the cart shape — 1–50 refs, no duplicates (422
+   *      VALIDATION_ERROR, Req 7.6);
+   *   3. resolve every product — an unknown id is a 404 (Req 7.7);
+   *   4. a free product (absent/zero Price) is rejected with 422
+   *      PAYMENT_NOT_REQUIRED (Req 7.5);
+   *   5. all products must share one Currency — else 422 VALIDATION_ERROR
+   *      (Req 7.6);
+   *   6. an already-held product is rejected with 409 ALREADY_ENTITLED (Req 7.4).
+   *
+   * Only then is ONE Razorpay order created whose amount is the SUM of the
+   * products' paise Prices (NO `PAISE_PER_RUPEE` multiplier — Test-series Prices
+   * are already paise, R4) and a Payment Record persisted with `testIds`/
+   * `sectionIds` (Req 7.1, 7.2). A persistence failure is logged with a
+   * timestamp and grants nothing (Req 12.14).
+   */
+  async function initiateProductPayment(
+    token: string,
+    productRefs: ProductRef[],
+  ): Promise<ProductOrderResult> {
+    // Resolve the caller first: 401 when no learner resolves; the admin guard
+    // in resolveLearner rejects a role_admin caller with 422 before any product
+    // resolution or amount computation (Req 7.3, 17.5).
+    const user = await resolveLearner(token);
+
+    // Validate the cart shape: 1–50 refs (Req 7.6).
+    if (
+      !Array.isArray(productRefs) ||
+      productRefs.length < PRODUCT_CART_MIN_ITEMS ||
+      productRefs.length > PRODUCT_CART_MAX_ITEMS
+    ) {
+      throw new ValidationError(
+        `A purchase must include between ${PRODUCT_CART_MIN_ITEMS} and ${PRODUCT_CART_MAX_ITEMS} products.`,
+        [
+          {
+            field: "products",
+            reason: `A purchase must include between ${PRODUCT_CART_MIN_ITEMS} and ${PRODUCT_CART_MAX_ITEMS} products.`,
+          },
+        ],
+      );
+    }
+
+    // No product may appear more than once, keyed by (type, id) (Req 7.6).
+    const seen = new Set<string>();
+    for (const ref of productRefs) {
+      const key = `${ref.type}:${ref.id}`;
+      if (seen.has(key)) {
+        throw new ValidationError(
+          "A product may not appear more than once in a purchase.",
+          [
+            {
+              field: "products",
+              reason: "A product may not appear more than once in a purchase.",
+            },
+          ],
+        );
+      }
+      seen.add(key);
+    }
+
+    // Resolve every product; an unknown id fails the whole purchase with a 404
+    // (Req 7.7). Collect the paise Price and Currency for each.
+    const resolved: {
+      ref: ProductRef;
+      priceAmount: number | null;
+      currency: string;
+    }[] = [];
+    for (const ref of productRefs) {
+      const record =
+        ref.type === "test"
+          ? await products.findTestById(ref.id)
+          : await products.findSectionById(ref.id);
+      if (record === null) {
+        throw new NotFoundError(
+          `The requested ${ref.type === "test" ? "Test" : "Section"} '${ref.id}' was not found.`,
+        );
+      }
+      resolved.push({
+        ref,
+        priceAmount: record.priceAmount,
+        currency: record.currency ?? DEFAULT_CURRENCY,
+      });
+    }
+
+    // Any free product (absent/zero Price) makes the whole purchase invalid
+    // (Req 7.5).
+    for (const item of resolved) {
+      if (classifyPrice(item.priceAmount) === "free") {
+        throw new PaymentNotRequiredError(
+          `The ${item.ref.type === "test" ? "Test" : "Section"} '${item.ref.id}' is free and does not require payment.`,
+        );
+      }
+    }
+
+    // All products must share a single Currency (Req 7.6).
+    const currency = resolved[0].currency;
+    if (resolved.some((item) => item.currency !== currency)) {
+      throw new ValidationError(
+        "All products in a purchase must share a single Currency.",
+        [
+          {
+            field: "products",
+            reason: "All products in a purchase must share a single Currency.",
+          },
+        ],
+      );
+    }
+
+    // Reject the whole purchase if the Learner already holds any covered product
+    // (Req 7.4) — no double charge, no duplicate Entitlement.
+    const [entitledTestIds, entitledSectionIds] = await Promise.all([
+      entitlements.listEntitledTestIds(user.id),
+      entitlements.listEntitledSectionIds(user.id),
+    ]);
+    const heldTestIds = new Set(entitledTestIds);
+    const heldSectionIds = new Set(entitledSectionIds);
+    for (const item of resolved) {
+      const alreadyHeld =
+        item.ref.type === "test"
+          ? heldTestIds.has(item.ref.id)
+          : heldSectionIds.has(item.ref.id);
+      if (alreadyHeld) {
+        throw new AlreadyEntitledError(
+          `You already own the ${item.ref.type === "test" ? "Test" : "Section"} '${item.ref.id}'.`,
+        );
+      }
+    }
+
+    // Sum the products' paise Prices directly — Test-series Prices are already
+    // in paise, so (unlike the study-material path) there is NO PAISE_PER_RUPEE
+    // multiplier (R4). By this point every product is paid, so priceAmount is a
+    // positive integer.
+    const amountInPaise = resolved.reduce(
+      (sum, item) => sum + (item.priceAmount as number),
+      0,
+    );
+    const testIds = resolved
+      .filter((item) => item.ref.type === "test")
+      .map((item) => item.ref.id);
+    const sectionIds = resolved
+      .filter((item) => item.ref.type === "section")
+      .map((item) => item.ref.id);
+
+    // Persist the Payment Record with status `created` (Req 7.1, 7.2). A
+    // persistence failure is logged with a timestamp; no Entitlement is granted
+    // (Req 12.14).
+    let payment;
+    try {
+      // Razorpay caps `receipt` at 40 chars, so build a short cart receipt.
+      const order = await deps.createOrder({
+        amount: amountInPaise,
+        currency,
+        receipt: `prod_${user.id.slice(-12)}_${Date.now().toString(36)}`,
+      });
+
+      payment = await payments.createProductPayment({
+        userId: user.id,
+        testIds,
+        sectionIds,
+        amount: amountInPaise,
+        currency,
+        razorpayOrderId: order.id,
+      });
+    } catch (error) {
+      logError("Failed to persist product Payment Record on initiation", {
+        userId: user.id,
+        testIds,
+        sectionIds,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw new InternalError();
+    }
+
+    return {
+      paymentId: payment.id,
+      razorpayOrderId: payment.razorpayOrderId,
+      testIds: payment.testIds,
+      sectionIds: payment.sectionIds,
+      amount: payment.amount,
+      currency: payment.currency,
+      razorpayKeyId: deps.razorpayKeyId,
+    };
+  }
+
+  /**
+   * Grant one idempotent Entitlement per product covered by a verified /
+   * captured / reconciled Payment Record (Req 7.2, 7.8, 12.8). Study Materials
+   * keep the existing `upsertEntitlement` grant; Tests and Sections grant via
+   * the product-aware `upsertProductEntitlement`. Every grant is upserted, so a
+   * duplicate confirmation (client `verify`, the webhook, or reconciliation)
+   * creates no second Entitlement (Req 12.19). A `null`/duplicate id is
+   * de-duplicated defensively.
+   */
+  async function grantEntitlementsForPayment(
+    record: Pick<
+      PaymentRecord,
+      "id" | "userId" | "studyMaterialIds" | "testIds" | "sectionIds"
+    >,
+  ): Promise<void> {
+    for (const studyMaterialId of new Set(record.studyMaterialIds)) {
+      await entitlements.upsertEntitlement({
+        userId: record.userId,
+        studyMaterialId,
+        paymentId: record.id,
+      });
+    }
+    for (const testId of new Set(record.testIds)) {
+      await entitlements.upsertProductEntitlement({
+        userId: record.userId,
+        product: { type: "test", id: testId },
+        paymentId: record.id,
+      });
+    }
+    for (const sectionId of new Set(record.sectionIds)) {
+      await entitlements.upsertProductEntitlement({
+        userId: record.userId,
+        product: { type: "section", id: sectionId },
+        paymentId: record.id,
+      });
+    }
+  }
+
+  /**
    * Best-effort transition of a Payment Record to `failed` (Req 12.7). A
    * persistence failure is logged with a timestamp (Req 12.14) but never
    * surfaces as anything other than the verification failure the caller is
@@ -337,15 +599,10 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
         status: PAYMENT_STATUS.SUCCESSFUL,
         razorpayPaymentId: input.razorpayPaymentId,
       });
-      // Grant one Entitlement per covered material; upsert keeps it idempotent
-      // so re-verifying (or the webhook) creates no duplicates (Req 12.8, 12.19).
-      for (const studyMaterialId of payment.studyMaterialIds) {
-        await entitlements.upsertEntitlement({
-          userId: payment.userId,
-          studyMaterialId,
-          paymentId: payment.id,
-        });
-      }
+      // Grant one Entitlement per covered product (Study Material, Test, or
+      // Section); upsert keeps it idempotent so re-verifying (or the webhook)
+      // creates no duplicates (Req 7.2, 7.8, 12.8, 12.19).
+      await grantEntitlementsForPayment(payment);
     } catch (error) {
       // Req 12.14: log the persistence failure with a timestamp and grant no
       // Entitlement.
@@ -414,13 +671,7 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
           ? { razorpayPaymentId: parsed.razorpayPaymentId }
           : {}),
       });
-      for (const studyMaterialId of payment.studyMaterialIds) {
-        await entitlements.upsertEntitlement({
-          userId: payment.userId,
-          studyMaterialId,
-          paymentId: payment.id,
-        });
-      }
+      await grantEntitlementsForPayment(payment);
     } catch (error) {
       logError("Failed to persist webhook-confirmed Payment / Entitlement", {
         paymentId: payment.id,
@@ -500,13 +751,7 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
           status: PAYMENT_STATUS.SUCCESSFUL,
           razorpayPaymentId: chosen.id,
         });
-        for (const studyMaterialId of new Set(record.studyMaterialIds)) {
-          await entitlements.upsertEntitlement({
-            userId: record.userId,
-            studyMaterialId,
-            paymentId: record.id,
-          });
-        }
+        await grantEntitlementsForPayment(record);
         logInfo("Reconciled Payment Record", {
           paymentId,
           razorpayOrderId,
@@ -625,6 +870,7 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
 
   return {
     initiatePayment,
+    initiateProductPayment,
     verifyPayment,
     handleWebhook,
     reconcilePayment,
@@ -654,6 +900,7 @@ export function createDefaultPaymentService(): PaymentService {
   return createPaymentService({
     payments: {
       createPayment: paymentRepository.createPayment,
+      createProductPayment: paymentRepository.createProductPayment,
       findPaymentByRazorpayOrderId:
         paymentRepository.findPaymentByRazorpayOrderId,
       updatePaymentStatus: paymentRepository.updatePaymentStatus,
@@ -662,6 +909,10 @@ export function createDefaultPaymentService(): PaymentService {
     entitlements: {
       findEntitlement: entitlementRepository.findEntitlement,
       upsertEntitlement: entitlementRepository.upsertEntitlement,
+      upsertProductEntitlement:
+        entitlementRepository.upsertProductEntitlement,
+      listEntitledTestIds: entitlementRepository.listEntitledTestIds,
+      listEntitledSectionIds: entitlementRepository.listEntitledSectionIds,
     },
     materials: {
       async findMaterialById(id) {
@@ -672,6 +923,28 @@ export function createDefaultPaymentService(): PaymentService {
               id: material.id,
               priceAmount: material.priceAmount,
               currency: material.currency,
+            };
+      },
+    },
+    products: {
+      async findTestById(id) {
+        const test = await testSeriesRepository.findTestGraphById(id);
+        return test === null
+          ? null
+          : {
+              id: test.id,
+              priceAmount: test.priceAmount,
+              currency: test.currency,
+            };
+      },
+      async findSectionById(id) {
+        const section = await testSeriesRepository.findSectionGraphById(id);
+        return section === null
+          ? null
+          : {
+              id: section.id,
+              priceAmount: section.priceAmount,
+              currency: section.currency,
             };
       },
     },

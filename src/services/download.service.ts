@@ -31,7 +31,7 @@
 // with typed domain errors that the errorHandler maps to the unified error
 // envelope without leaking internals (Req 8.3, 8.4).
 
-import { ROLE_COMMON } from '../constants/roles.constant';
+import { ROLE_ADMIN, ROLE_COMMON } from '../constants/roles.constant';
 import {
   ACCESS_TOKEN_TTL_SECONDS,
   EMAIL_MAX_LENGTH,
@@ -63,6 +63,7 @@ import * as userRepository from '../repositories/user.repository';
 import * as entitlementRepository from '../repositories/entitlement.repository';
 import { EMAIL_FORMAT_PATTERN } from './download.service.constant';
 import type { ApiErrorFieldDto } from '../types/api.types';
+import type { AccessTokenClaims } from '../types/auth.types';
 import type {
   DownloadGateResult,
   DownloadService,
@@ -150,6 +151,23 @@ export function validateGateSubmission(
   }
 
   return { name, email };
+}
+
+/**
+ * Whether the resolved caller holds the elevated `role_admin` Role, mirroring
+ * how `auth.middleware` derives the effective Role: an Admin Access Token
+ * (`role === role_admin`) qualifies, as does a learner token whose `roles`
+ * claim (from `User.roles`) includes `role_admin`. When true, the caller is
+ * granted access to any Study Material without an Entitlement or Payment,
+ * regardless of Price (Req 17.2), so the Paid-Material gate is short-circuited.
+ * No record is read, created, or modified for this decision. Pure.
+ */
+export function callerHoldsAdminRole(claims: AccessTokenClaims): boolean {
+  if (claims.role === ROLE_ADMIN) {
+    return true;
+  }
+  const roles = Array.isArray(claims.roles) ? claims.roles : [];
+  return roles.includes(ROLE_ADMIN);
 }
 
 // --- Service factory ------------------------------------------------------
@@ -245,12 +263,18 @@ export function createDownloadService(
       );
     }
 
+    // Admin bypass (Req 17.2, 17.4): a caller holding `role_admin` is granted
+    // access to any Study Material without an Entitlement or Payment, regardless
+    // of Price. This short-circuits the Paid-Material gate below WITHOUT reading,
+    // creating, or modifying any Entitlement/Payment record; the non-admin flow
+    // is otherwise unchanged.
+    //
     // Paid-Material entitlement gate (Req 12.2, 12.3): a Paid Material requires
     // a Payment Entitlement for the resolved Learner. When none is held, no
     // presigned URL is minted and no Download Record is inserted; the Learner
     // is prompted to pay via a PAYMENT_REQUIRED (403). Free Materials are
     // unaffected and proceed through the existing Download Gate flow.
-    if (isPaidMaterial(material.priceAmount)) {
+    if (isPaidMaterial(material.priceAmount) && !callerHoldsAdminRole(claims)) {
       const entitlement = await deps.entitlements.findEntitlement(
         user.id,
         material.id,
@@ -324,7 +348,11 @@ export function createDownloadService(
       );
     }
 
-    if (isPaidMaterial(material.priceAmount)) {
+    // Admin bypass (Req 17.2, 17.4): mirrors prepareDownload — a `role_admin`
+    // caller previews any Study Material without an Entitlement or Payment,
+    // regardless of Price, reading/creating/modifying no record. The non-admin
+    // Paid-Material gate is otherwise unchanged (Req 12.2, 12.3).
+    if (isPaidMaterial(material.priceAmount) && !callerHoldsAdminRole(claims)) {
       const entitlement = await deps.entitlements.findEntitlement(
         user.id,
         material.id,

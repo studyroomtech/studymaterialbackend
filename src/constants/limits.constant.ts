@@ -63,6 +63,32 @@ export const RATE_LIMIT_MAX_REQUESTS = 20;
 export const RATE_LIMIT_WINDOW_SECONDS = 10;
 export const RATE_LIMIT_WINDOW_MS = RATE_LIMIT_WINDOW_SECONDS * 1000;
 
+// --- Test Series authoring bounds ---
+// Authoring bounds for the Test Series capability. A Test title shares the same
+// 1–200 bound as a Study Material title (Req 2.1); Question text is 1–2000 and
+// each Option's text is 1–1000 (Req 4.1); every Question carries at least 2
+// Options and at least 1 Correct Option (Req 4.1).
+export const TEST_TITLE_MIN_LENGTH = TITLE_MIN_LENGTH;
+export const TEST_TITLE_MAX_LENGTH = TITLE_MAX_LENGTH;
+
+export const QUESTION_TEXT_MIN_LENGTH = 1;
+export const QUESTION_TEXT_MAX_LENGTH = 2000;
+
+export const OPTION_TEXT_MIN_LENGTH = 1;
+export const OPTION_TEXT_MAX_LENGTH = 1000;
+
+export const MIN_OPTIONS_PER_QUESTION = 2;
+export const MIN_CORRECT_OPTIONS_PER_QUESTION = 1;
+
+// --- Product cart (Test Series purchase) ---
+// A product-cart payment covers between 1 and 50 product references (Req 7.6).
+export const PRODUCT_CART_MIN_ITEMS = 1;
+export const PRODUCT_CART_MAX_ITEMS = 50;
+
+// --- Marks (centi-marks) ---
+// Marks are stored as integer centi-marks; 1 mark = 100 centi-marks (Req 13.2, R3).
+export const CENTIMARKS_PER_MARK = 100;
+
 // Grouped view of the length bounds for convenient, type-safe access.
 export const LENGTH_BOUNDS = {
   name: { min: NAME_MIN_LENGTH, max: NAME_MAX_LENGTH },

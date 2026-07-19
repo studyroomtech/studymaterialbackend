@@ -386,16 +386,23 @@ export function createMaterialService(
    * when no learner is resolved — a `PaymentRequiredError` (403) is thrown
    * before any content is returned (Req 12.2, 12.3). Free Materials are
    * unaffected and returned without an entitlement check.
+   *
+   * Admin bypass (Req 17.2, 17.4): when `isAdmin` is true (the caller holds
+   * `role_admin`, derived by the controller from `req.auth`), access is granted
+   * to any Study Material regardless of Price WITHOUT evaluating the entitlement
+   * gate and without reading, creating, or modifying any Entitlement/Payment
+   * record. The non-admin flow is otherwise unchanged.
    */
   async function getMaterial(
     id: string,
     userId?: string | null,
+    isAdmin?: boolean,
   ): Promise<MaterialDto> {
     const record = await materials.findById(id);
     if (record === null) {
       throw new NotFoundError('The requested Study Material was not found.');
     }
-    if (isPaidMaterial(record.priceAmount)) {
+    if (isAdmin !== true && isPaidMaterial(record.priceAmount)) {
       await requireEntitlement(userId, id);
     }
     return toMaterialDto(record);

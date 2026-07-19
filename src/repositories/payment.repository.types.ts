@@ -19,6 +19,25 @@ export interface CreatePaymentInput {
 }
 
 /**
+ * The fields persisted when a product-cart Payment is initiated (Req 7.1, 7.2).
+ * A product Payment covers a cart of Tests and/or Sectional Tests rather than
+ * Study Materials, so it carries `testIds`/`sectionIds` (both paise-priced)
+ * instead of `studyMaterialIds`. The charged `amount` is the sum of the covered
+ * products' paise Prices. `status` defaults to `created` and `studyMaterialIds`
+ * defaults to empty via the schema, so neither is part of the create input.
+ * The covered `testIds`/`sectionIds` are read back off the persisted Payment by
+ * the verify/webhook grant path to grant one Entitlement per covered product.
+ */
+export interface CreateProductPaymentInput {
+  userId: string;
+  testIds: string[];
+  sectionIds: string[];
+  amount: number;
+  currency?: string;
+  razorpayOrderId: string;
+}
+
+/**
  * The fields updated when a Payment transitions to `successful` or `failed`
  * (Req 12.6, 12.7). The `updatedAt` timestamp is maintained automatically by
  * the schema's `@updatedAt` mapping. On a successful verification the Razorpay
