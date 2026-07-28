@@ -189,7 +189,15 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
         state.test.timeLimitSeconds,
         now,
       );
-      sections = [];
+      // Under overall timing there is no independent per-Section timer, but the
+      // Sections are still surfaced so the player can group Questions by Section
+      // and show the test structure. Each Section shares the single attempt-level
+      // status and remaining time (Req 12.1).
+      sections = state.test.sections.map((section) => ({
+        sectionId: section.id,
+        status: state.status,
+        remainingSeconds: attemptRemaining,
+      }));
     } else {
       sections = state.sectionAttempts.map((sa) => ({
         sectionId: sa.sectionId,

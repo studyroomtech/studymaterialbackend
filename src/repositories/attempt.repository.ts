@@ -95,6 +95,10 @@ export function findAttemptState(
           title: true,
           timingMode: true,
           timeLimitSeconds: true,
+          sections: {
+            select: { id: true, title: true, orderIndex: true },
+            orderBy: { orderIndex: 'asc' },
+          },
         },
       },
       sectionAttempts: {

@@ -139,6 +139,9 @@ export type AttemptStateRecord = Prisma.TestAttemptGetPayload<{
         title: true;
         timingMode: true;
         timeLimitSeconds: true;
+        sections: {
+          select: { id: true; title: true; orderIndex: true };
+        };
       };
     };
     sectionAttempts: {
