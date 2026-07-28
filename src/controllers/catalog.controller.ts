@@ -60,6 +60,11 @@ function toCatalogMaterialInput(
     tags: material.materialTags.map((materialTag) => ({
       categoryId: materialTag.tagId,
     })),
+    averageRating:
+      material.ratingCount > 0
+        ? material.ratingSum / material.ratingCount
+        : null,
+    reviewCount: material.ratingCount,
   };
 }
 

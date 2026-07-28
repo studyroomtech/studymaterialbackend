@@ -74,6 +74,15 @@ export interface MaterialDto {
   priceAmount?: number | null;
   currency?: string;
   isPaid?: boolean;
+  /**
+   * The material's average rating (`ratingSum / ratingCount`), or `null` when
+   * it has no ratings yet. Surfaced on the catalog, search, and single-material
+   * responses so the Frontend can render an aggregate badge without a separate
+   * request.
+   */
+  averageRating?: number | null;
+  /** The number of ratings the material has received (0 when none). */
+  reviewCount?: number;
 }
 
 /**

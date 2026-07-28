@@ -43,6 +43,7 @@ import downloadsRouter from './routes/downloads.routes';
 import filesRouter from './routes/files.routes';
 import materialsRouter from './routes/materials.routes';
 import paymentsRouter from './routes/payments.routes';
+import reviewsRouter from './routes/reviews.routes';
 import testSeriesRouter from './routes/testSeries.routes';
 
 // The Razorpay webhook path whose raw body must reach `express.raw` unparsed.
@@ -105,6 +106,7 @@ export function createApp(): Express {
   // authMiddleware): catalog, material search/read, and the download gate.
   app.use('/api', catalogRouter);
   app.use('/api', materialsRouter);
+  app.use('/api', reviewsRouter);
   app.use('/api', downloadsRouter);
   app.use('/api', paymentsRouter);
   app.use('/api', accountRouter);

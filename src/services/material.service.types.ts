@@ -60,6 +60,16 @@ export interface MaterialRecord {
    * responses (Req 11.13, 11.14).
    */
   currency?: string | null;
+  /**
+   * The denormalized count of ratings the material has received (0 when none).
+   * Surfaced on the DTO so the Frontend can render an aggregate rating badge.
+   */
+  ratingCount?: number;
+  /**
+   * The denormalized sum of all rating values. The DTO exposes the derived
+   * average (`ratingSum / ratingCount`), never the raw sum.
+   */
+  ratingSum?: number;
 }
 
 /**

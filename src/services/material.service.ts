@@ -235,6 +235,8 @@ export function buildTagsByCategoryType(
  */
 export function toMaterialDto(record: MaterialRecord): MaterialDto {
   const priceAmount = record.priceAmount ?? null;
+  const ratingCount = record.ratingCount ?? 0;
+  const ratingSum = record.ratingSum ?? 0;
   return {
     id: record.id,
     title: record.title,
@@ -246,6 +248,8 @@ export function toMaterialDto(record: MaterialRecord): MaterialDto {
     priceAmount,
     currency: record.currency ?? DEFAULT_CURRENCY,
     isPaid: isPaidMaterial(priceAmount),
+    averageRating: ratingCount > 0 ? ratingSum / ratingCount : null,
+    reviewCount: ratingCount,
   };
 }
 
@@ -436,6 +440,8 @@ function toMaterialRecord(record: MaterialWithTags): MaterialRecord {
     fileSizeBytes: record.fileSizeBytes,
     priceAmount: record.priceAmount,
     currency: record.currency,
+    ratingCount: record.ratingCount,
+    ratingSum: record.ratingSum,
     tags: record.materialTags.map((materialTag) => ({
       categoryId: materialTag.tagId,
       categoryTypeId: materialTag.tag.categoryTypeId,

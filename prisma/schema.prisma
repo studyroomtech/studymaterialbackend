@@ -33,6 +33,7 @@ model User {
   payments     Payment[]
   entitlements Entitlement[]
   testAttempts TestAttempt[]
+  reviews      Review[]
 
   @@index([email])
 }
@@ -66,13 +67,35 @@ model StudyMaterial {
   fileSizeBytes Int
   priceAmount   Int? // null/0 => Free; >0 => Paid (Req 11.13–11.14). Smallest currency unit (paise).
   currency      String        @default("INR") // Req 11.13/12: INR only (app-validated)
+  // Denormalized rating aggregates: average = ratingSum / ratingCount (null when
+  // ratingCount == 0). Kept in sync transactionally on every Review write so the
+  // catalog/search listings avoid per-material aggregation (N+1).
+  ratingCount   Int           @default(0)
+  ratingSum     Int           @default(0)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   materialTags  MaterialTag[]
   downloads     Download[]
   entitlements  Entitlement[]
+  reviews       Review[]
 
   @@index([title])
+}
+
+model Review {
+  id              String        @id @default(cuid())
+  userId          String
+  studyMaterialId String
+  rating          Int // 1..5 (app-validated)
+  body            String        @default("") // 0..2000 chars (app-validated)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  user            User          @relation(fields: [userId], references: [id])
+  studyMaterial   StudyMaterial @relation(fields: [studyMaterialId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, studyMaterialId]) // one review per user per material (upsert)
+  @@index([studyMaterialId])
+  @@index([userId])
 }
 
 enum PaymentStatus {

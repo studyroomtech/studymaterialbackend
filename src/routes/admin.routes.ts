@@ -55,6 +55,7 @@ import {
   renameCategoryTypeHandler,
   uploadMaterialHandler,
 } from '../controllers/admin.controller';
+import { adminDeleteReviewHandler } from '../controllers/review.controller';
 import {
   CATEGORY_NAME_MAX_LENGTH,
   CATEGORY_NAME_MIN_LENGTH,
@@ -82,6 +83,12 @@ const upload = multer({ storage: multer.memoryStorage() });
 // A required, non-empty identifier route parameter (`:id`).
 const idParamsSchema = z.object({
   id: z.string().min(1),
+});
+
+// A required, non-empty review identifier route parameter (`:reviewId`) for
+// admin review moderation.
+const reviewIdParamsSchema = z.object({
+  reviewId: z.string().min(1),
 });
 
 // Optional multipart Price amount: on the multipart upload every field arrives
@@ -284,6 +291,16 @@ export function createAdminRouter(): Router {
     requireAdmin,
     validate({ params: idParamsSchema }),
     deleteCategoryHandler,
+  );
+
+  // --- Review moderation -------------------------------------------------
+  // Delete any learner's review by id (Reviewer moderation). Guarded by
+  // requireAdmin like every other Content Management Action.
+  router.delete(
+    '/reviews/:reviewId',
+    requireAdmin,
+    validate({ params: reviewIdParamsSchema }),
+    adminDeleteReviewHandler,
   );
 
   return router;

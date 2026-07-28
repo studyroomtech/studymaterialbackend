@@ -91,6 +91,12 @@ export function buildMaterialDto(
   if (material.isPaid !== undefined) {
     dto.isPaid = material.isPaid;
   }
+  if (material.averageRating !== undefined) {
+    dto.averageRating = material.averageRating;
+  }
+  if (material.reviewCount !== undefined) {
+    dto.reviewCount = material.reviewCount;
+  }
 
   return dto;
 }
