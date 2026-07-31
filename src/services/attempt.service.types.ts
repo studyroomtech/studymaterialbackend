@@ -21,6 +21,7 @@ import type {
   AttemptQuestionsDto,
   AttemptReviewDto,
   AttemptStateDto,
+  PerformanceDto,
 } from '../types/domain.types';
 import type { AttemptRepository } from '../repositories/attempt.repository.types';
 import type { TestRepository } from '../repositories/testSeries.repository.types';
@@ -131,6 +132,22 @@ export interface AttemptService {
   startTest(token: string, testId: string): Promise<AttemptStateDto>;
   /** Start or resume a Section-scoped attempt (Req 8.2, 17.*). */
   startSection(token: string, sectionId: string): Promise<AttemptStateDto>;
+  /**
+   * The caller's current attempt state, with timing reconciled first. This is
+   * the read the Test Player polls (and calls the instant its countdown hits
+   * zero) so an expired Section is closed and the next one activated without
+   * finalizing the attempt. Owner-scoped: a missing/unowned attempt is a 404.
+   */
+  getAttemptState(token: string, attemptId: string): Promise<AttemptStateDto>;
+  /**
+   * Close the currently active Section early and activate the next one under
+   * Sequential Sectional Timing ("Submit Section & Continue"). Unused time is
+   * forfeited and the closed Section is never reopened. When the closed Section
+   * was the last one, the whole attempt is finalized and returned `completed`.
+   * Rejects with a 422 when the attempt is not in_progress or is an Overall
+   * Timing whole-Test attempt (which has no Sections to advance through).
+   */
+  advanceSection(token: string, attemptId: string): Promise<AttemptStateDto>;
   /** Pause an in_progress attempt (else 422) (Req 10.1, 10.6). */
   pause(token: string, attemptId: string): Promise<AttemptStateDto>;
   /** Resume a paused attempt, auto-closing expired scopes (else 422) (Req 10.3, 10.5, 10.7). */
@@ -145,8 +162,15 @@ export interface AttemptService {
   submitAttempt(token: string, attemptId: string): Promise<AttemptResultDto>;
   /** Create a fresh attempt for an entitled/free/admin Test, preserving history (Req 15). */
   retakeTest(token: string, testId: string): Promise<AttemptStateDto>;
-  /** Every completed attempt for the caller (Req 14.1, 14.3). */
+  /** Every completed attempt for the caller, each with its result summary (Req 14.1, 14.3). */
   listHistory(token: string): Promise<AttemptHistoryItemDto[]>;
+  /**
+   * The caller's performance across every completed attempt: overall totals,
+   * the per-Test trend across retakes, and the per-Section strong/weak ranking.
+   * Derived at read time; a Learner with no completed attempts gets a zeroed
+   * report rather than an error.
+   */
+  getPerformance(token: string): Promise<PerformanceDto>;
   /** One owner-scoped completed attempt with its full review graph (Req 14.2, 14.4). */
   getAttemptReview(token: string, attemptId: string): Promise<AttemptReviewDto>;
   /**

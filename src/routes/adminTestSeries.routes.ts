@@ -20,6 +20,11 @@
 //     re-checked by the Test authoring service; the Zod layer shapes the input
 //     and shares the same bounds constants (`limits.constant.ts`).
 //
+// Alongside the incremental authoring endpoints (create a Test, then add one
+// Section at a time) there is `POST /api/admin/tests/import`, which configures a
+// complete Test — Sections, Questions, and Options — from a single JSON
+// document in one atomic call.
+//
 // The router declares paths relative to the `/api` mount point (matching the
 // design's Route table: `POST /api/admin/tests`, `PATCH /api/admin/sections/:id`,
 // …); mounting it under `/api` alongside the existing routers is the
@@ -36,10 +41,16 @@ import {
   editSectionHandler,
   editTestHandler,
   getTestForAdminHandler,
+  importTestHandler,
 } from '../controllers/adminTestSeries.controller';
 import {
+  MAX_OPTIONS_PER_QUESTION,
+  MAX_QUESTIONS_PER_SECTION,
+  MAX_SECTIONS_PER_TEST,
   MIN_CORRECT_OPTIONS_PER_QUESTION,
   MIN_OPTIONS_PER_QUESTION,
+  MIN_QUESTIONS_PER_SECTION,
+  MIN_SECTIONS_PER_TEST,
   OPTION_TEXT_MAX_LENGTH,
   OPTION_TEXT_MIN_LENGTH,
   QUESTION_TEXT_MAX_LENGTH,
@@ -84,6 +95,7 @@ const optionInputSchema = z.object({
 const optionsSchema = z
   .array(optionInputSchema)
   .min(MIN_OPTIONS_PER_QUESTION)
+  .max(MAX_OPTIONS_PER_QUESTION)
   .refine(
     (options) =>
       options.filter((option) => option.isCorrect).length >=
@@ -152,6 +164,32 @@ const editSectionBodySchema = z.object({
   questions: z.array(questionInputSchema).optional(),
 });
 
+// `POST /api/admin/tests/import` — configure a complete Test from one JSON
+// document: the same Test-level fields as `POST /api/admin/tests`, plus every
+// Section with its Questions inline. A Section's array position becomes its
+// `orderIndex`, and therefore the order Sequential Sectional Timing runs the
+// Sections in.
+//
+// Unlike the incremental endpoints this accepts a whole graph in one request,
+// so the collections are bounded at both ends: a Test needs at least one
+// Section and a Section at least one Question to be attemptable, and the
+// maximums stop a single request asking for an unbounded nested write.
+const importSectionBodySchema = createSectionBodySchema.extend({
+  questions: z
+    .array(questionInputSchema)
+    .min(MIN_QUESTIONS_PER_SECTION)
+    .max(MAX_QUESTIONS_PER_SECTION),
+});
+
+// Exported so the import tests can assert the shipped sample payload satisfies
+// the same schema the route enforces, rather than only the service's validators.
+export const importTestBodySchema = createTestBodySchema.extend({
+  sections: z
+    .array(importSectionBodySchema)
+    .min(MIN_SECTIONS_PER_TEST)
+    .max(MAX_SECTIONS_PER_TEST),
+});
+
 // `POST /api/admin/sections/:id/questions` — append a Question (text 1–2000, ≥2
 // Options each 1–1000, ≥1 correct) to a Section (Req 4.1, 4.4).
 const createQuestionBodySchema = questionInputSchema;
@@ -174,9 +212,10 @@ const editQuestionBodySchema = z.object({
  * unlike `admin.routes.ts` — there is no login entry point to exempt), and each
  * route additionally validates its params/body with Zod before the controller
  * runs. Mount at `/api` so the effective routes are `POST /api/admin/tests`,
- * `PATCH /api/admin/tests/:id`, `POST /api/admin/tests/:id/sections`,
- * `PATCH /api/admin/sections/:id`, `POST /api/admin/sections/:id/questions`,
- * `PATCH /api/admin/questions/:id`, and `GET /api/admin/tests/:id`.
+ * `POST /api/admin/tests/import`, `PATCH /api/admin/tests/:id`,
+ * `POST /api/admin/tests/:id/sections`, `PATCH /api/admin/sections/:id`,
+ * `POST /api/admin/sections/:id/questions`, `PATCH /api/admin/questions/:id`,
+ * and `GET /api/admin/tests/:id`.
  */
 export function createAdminTestSeriesRouter(): Router {
   const router = Router();
@@ -191,6 +230,14 @@ export function createAdminTestSeriesRouter(): Router {
     '/admin/tests',
     validate({ body: createTestBodySchema }),
     createTestHandler,
+  );
+
+  // Registered before the `/admin/tests/:id` routes so the literal `import`
+  // segment is never captured as a Test id.
+  router.post(
+    '/admin/tests/import',
+    validate({ body: importTestBodySchema }),
+    importTestHandler,
   );
 
   router.patch(

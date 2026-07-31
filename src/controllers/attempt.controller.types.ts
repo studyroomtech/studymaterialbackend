@@ -13,6 +13,7 @@ import type {
   AttemptQuestionsDto,
   AttemptReviewDto,
   AttemptStateDto,
+  PerformanceDto,
 } from '../types/domain.types';
 import type { AttemptResultDto } from '../services/attempt.service.types';
 
@@ -42,8 +43,18 @@ export interface AttemptHistoryResponse {
 }
 
 /**
- * Response body for one owner-scoped attempt review (Req 14.2): each in-scope
- * Question with its Options, Correct Option Set, and the Learner's Response.
+ * Response body for the caller's performance across every completed attempt:
+ * overall totals, the per-Test trend, and the per-Section strong/weak ranking.
+ * A Learner with no completed attempts receives a zeroed report, not an error.
+ */
+export interface PerformanceResponse {
+  performance: PerformanceDto;
+}
+
+/**
+ * Response body for one owner-scoped attempt review (Req 14.2): the result
+ * summary, the per-Section breakdown, and each in-scope Question with its
+ * Options, Correct Option Set, and the Learner's Response.
  */
 export interface AttemptReviewResponse {
   review: AttemptReviewDto;

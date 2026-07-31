@@ -1,0 +1,97 @@
+{
+  "title": "SSC CGL Tier 1 — Full Mock Test 1",
+  "timingMode": "sectional",
+  "timeLimitSeconds": 900,
+  "priceAmount": 19900,
+  "currency": "INR",
+  "sections": [
+    {
+      "title": "Quantitative Aptitude",
+      "timeLimitSeconds": 300,
+      "correctMark": 2,
+      "negativeMark": 0.5,
+      "questions": [
+        {
+          "text": "What is 15% of 240?",
+          "options": [
+            { "text": "36", "isCorrect": true },
+            { "text": "32", "isCorrect": false },
+            { "text": "40", "isCorrect": false },
+            { "text": "24", "isCorrect": false }
+          ]
+        },
+        {
+          "text": "A train covers 180 km in 3 hours. What is its average speed?",
+          "options": [
+            { "text": "50 km/h", "isCorrect": false },
+            { "text": "60 km/h", "isCorrect": true },
+            { "text": "65 km/h", "isCorrect": false },
+            { "text": "75 km/h", "isCorrect": false }
+          ]
+        },
+        {
+          "text": "Which of the following are prime numbers? (Select all that apply.)",
+          "options": [
+            { "text": "17", "isCorrect": true },
+            { "text": "21", "isCorrect": false },
+            { "text": "23", "isCorrect": true },
+            { "text": "27", "isCorrect": false }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Logical Reasoning",
+      "timeLimitSeconds": 300,
+      "correctMark": 2,
+      "negativeMark": 0.5,
+      "priceAmount": 4900,
+      "questions": [
+        {
+          "text": "Which number comes next in the sequence: 2, 6, 12, 20, 30, ?",
+          "options": [
+            { "text": "40", "isCorrect": false },
+            { "text": "42", "isCorrect": true },
+            { "text": "44", "isCorrect": false },
+            { "text": "46", "isCorrect": false }
+          ]
+        },
+        {
+          "text": "If MONDAY is coded as NPOEBZ, how is FRIDAY coded?",
+          "options": [
+            { "text": "GSJEBZ", "isCorrect": true },
+            { "text": "GSJDBZ", "isCorrect": false },
+            { "text": "FSJEBZ", "isCorrect": false },
+            { "text": "GSIEBZ", "isCorrect": false }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "English Language",
+      "timeLimitSeconds": 300,
+      "correctMark": 1,
+      "negativeMark": 0,
+      "questions": [
+        {
+          "text": "Choose the word most nearly opposite in meaning to \"ABUNDANT\".",
+          "options": [
+            { "text": "Plentiful", "isCorrect": false },
+            { "text": "Scarce", "isCorrect": true },
+            { "text": "Ample", "isCorrect": false },
+            { "text": "Copious", "isCorrect": false }
+          ]
+        },
+        {
+          "text": "Select the correctly spelled word.",
+          "options": [
+            { "text": "Occurrence", "isCorrect": true },
+            { "text": "Occurence", "isCorrect": false },
+            { "text": "Ocurrence", "isCorrect": false },
+            { "text": "Occurrance", "isCorrect": false }
+          ]
+        }
+      ]
+    }
+  ]
+}

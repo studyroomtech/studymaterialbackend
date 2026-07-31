@@ -19,6 +19,7 @@ import type {
   CreateQuestionData,
   CreateSectionData,
   CreateTestData,
+  CreateTestGraphData,
   QuestionData,
   QuestionWithOptions,
   SectionGraph,
@@ -87,6 +88,46 @@ export function createTest(input: CreateTestData): Promise<Test> {
       priceAmount: input.priceAmount ?? null,
       ...(input.currency !== undefined ? { currency: input.currency } : {}),
     },
+  });
+}
+
+/**
+ * Persist an entire Test graph — the Test plus every Section, Question, and
+ * Option — in one nested create, returning the ordered graph. Backs the
+ * whole-Test JSON import.
+ *
+ * Prisma issues a nested create as a single transaction, so the import is
+ * all-or-nothing: a payload that fails partway through leaves no half-built
+ * Test behind for an admin to discover and clean up. Sections are written in
+ * the `orderIndex` the caller assigned, which is the order Sequential Sectional
+ * Timing activates them in.
+ */
+export function createTestGraph(
+  input: CreateTestGraphData
+): Promise<TestGraph> {
+  return getPrismaClient().test.create({
+    data: {
+      title: input.title,
+      timingMode: input.timingMode,
+      timeLimitSeconds: input.timeLimitSeconds,
+      priceAmount: input.priceAmount ?? null,
+      ...(input.currency !== undefined ? { currency: input.currency } : {}),
+      sections: {
+        create: input.sections.map((section) => ({
+          title: section.title,
+          orderIndex: section.orderIndex,
+          timeLimitSeconds: section.timeLimitSeconds,
+          correctMarkCenti: section.correctMarkCenti,
+          negativeMarkCenti: section.negativeMarkCenti,
+          priceAmount: section.priceAmount ?? null,
+          ...(section.currency !== undefined
+            ? { currency: section.currency }
+            : {}),
+          questions: { create: section.questions.map(nestedQuestionCreate) },
+        })),
+      },
+    },
+    include: TEST_GRAPH_INCLUDE,
   });
 }
 

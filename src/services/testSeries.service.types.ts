@@ -96,6 +96,28 @@ export interface CreateTestInput {
 }
 
 /**
+ * A Section supplied as part of a whole-Test JSON import. Identical to
+ * `CreateSectionInput` except that `questions` is required: an import describes
+ * a finished Test, and a Section with no Questions cannot be attempted. The
+ * Section's position in the `sections` array is its `orderIndex`, and therefore
+ * the order Sequential Sectional Timing activates it in.
+ */
+export interface ImportSectionInput extends CreateSectionInput {
+  questions: CreateQuestionInput[];
+}
+
+/**
+ * The input to configure a complete Test in one call: the Test's own fields
+ * plus every Section with its Questions and Options. This is the whole-Test
+ * counterpart to the incremental `createTest` + `addSection` + `addQuestion`
+ * flow, intended for authoring a Test from a JSON document rather than through
+ * the admin UI.
+ */
+export interface ImportTestInput extends CreateTestInput {
+  sections: ImportSectionInput[];
+}
+
+/**
  * The editable Test-level fields (Req 5.5). Every field is optional; omitted
  * fields are left unchanged and every Section is left untouched.
  */
@@ -245,6 +267,15 @@ export interface TestServiceDeps {
 export interface TestService {
   /** Create a Test (title 1–200, Timing Mode, positive overall time; optional Price) (Req 2.1–2.5). */
   createTest(input: CreateTestInput): Promise<TestDto>;
+  /**
+   * Configure a complete Test — its Sections, Questions, and Options — from a
+   * single JSON document, and return the full authoring view. The whole payload
+   * is validated before anything is written and persisted in one atomic create,
+   * so a rejected import leaves no partially built Test behind. Validation
+   * errors carry indexed field paths (`sections.1.questions.4.options.0.text`)
+   * so the offending entry in a large document can be found directly.
+   */
+  importTest(input: ImportTestInput): Promise<AdminTestDto>;
   /** Edit Test-level fields only; leaves every Section untouched (Req 5.5). */
   editTest(testId: string, input: EditTestInput): Promise<TestDto>;
   /** Persist a Section (+ its Questions/Options) independently and return it (Req 5.1, 3.*). */

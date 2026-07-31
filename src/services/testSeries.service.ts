@@ -5,6 +5,8 @@
 //
 //   - createTest  — validate Test fields (title 1–200, Timing Mode, positive
 //     overall Time Limit; optional Price) and persist a Test (Req 2.1–2.5).
+//   - importTest  — configure a complete Test (Sections + Questions + Options)
+//     from one JSON document, validated in full and written atomically.
 //   - editTest    — patch Test-level fields only, leaving every Section
 //     untouched (Req 5.5).
 //   - addSection  — validate the Section and each of its Questions, then persist
@@ -31,8 +33,12 @@
 
 import {
   CENTIMARKS_PER_MARK,
+  MAX_QUESTIONS_PER_SECTION,
+  MAX_SECTIONS_PER_TEST,
   MIN_CORRECT_OPTIONS_PER_QUESTION,
   MIN_OPTIONS_PER_QUESTION,
+  MIN_QUESTIONS_PER_SECTION,
+  MIN_SECTIONS_PER_TEST,
   OPTION_TEXT_MAX_LENGTH,
   OPTION_TEXT_MIN_LENGTH,
   QUESTION_TEXT_MAX_LENGTH,
@@ -64,6 +70,7 @@ import type {
   EditQuestionInput,
   EditSectionInput,
   EditTestInput,
+  ImportTestInput,
   NormalizedOption,
   NormalizedQuestion,
   NormalizedSection,
@@ -294,6 +301,61 @@ export function isMultipleCorrect(options: readonly OptionInput[]): boolean {
   );
 }
 
+// --- Nested validation (whole-Test import) --------------------------------
+
+/**
+ * Run one of the single-entity validators as part of a larger document,
+ * re-labelling any field it complains about with its position in that document
+ * (`sections.1.questions.4.options.0.text`). Returns `null` when the entry was
+ * invalid, having recorded its errors in `fields` — the caller keeps validating
+ * the rest so a single request reports every problem in the payload rather than
+ * making the author fix them one round-trip at a time.
+ */
+function validateNested<T>(
+  validate: () => T,
+  pathPrefix: string,
+  fields: ApiErrorFieldDto[],
+): T | null {
+  try {
+    return validate();
+  } catch (error) {
+    if (!(error instanceof ValidationError)) {
+      throw error;
+    }
+    for (const field of error.fields ?? []) {
+      fields.push({
+        field: `${pathPrefix}.${field.field}`,
+        reason: field.reason,
+      });
+    }
+    return null;
+  }
+}
+
+/**
+ * Push a `<field>` error when a collection's size falls outside `[min, max]`.
+ * Both noun forms are supplied because the lower bound reads as a singular
+ * ("at least 1 Section is required") and the upper bound as a plural.
+ */
+function collectCollectionSize(
+  size: number,
+  field: string,
+  bounds: { min: number; max: number; singular: string; plural: string },
+  fields: ApiErrorFieldDto[],
+): void {
+  if (size < bounds.min) {
+    fields.push({
+      field,
+      reason: `at least ${bounds.min} ${bounds.singular} is required.`,
+    });
+  } else if (size > bounds.max) {
+    fields.push({
+      field,
+      reason: `at most ${bounds.max} ${bounds.plural} are allowed.`,
+    });
+  }
+}
+
 // --- Pure mappers (normalized/persisted → repository input / DTO) ----------
 
 /** Map a normalized Question to the repository nested-create payload at `orderIndex`. */
@@ -395,6 +457,111 @@ export function createTestService(deps: TestServiceDeps): TestService {
       currency: normalized.currency,
     });
     return toTestDto(created);
+  }
+
+  /**
+   * Configure a complete Test from one JSON document and return its full
+   * authoring view.
+   *
+   * The entire payload is validated first — Test fields, then every Section,
+   * then every Question and its Options — accumulating errors rather than
+   * stopping at the first, so a large document reports all of its problems in
+   * one response. Each error is labelled with its position
+   * (`sections.2.questions.7.options.1.text`) so the offending entry can be
+   * found without counting through the file by hand.
+   *
+   * Nothing is written until the whole document is known to be valid, and the
+   * write itself is a single atomic create. An import therefore either produces
+   * a complete, attemptable Test or changes nothing at all — there is no
+   * half-imported Test to find and clean up.
+   *
+   * A Section's position in the `sections` array becomes its `orderIndex`, which
+   * under Sectional Timing is the order the Sections are activated in.
+   */
+  async function importTest(input: ImportTestInput): Promise<AdminTestDto> {
+    const fields: ApiErrorFieldDto[] = [];
+
+    const normalizedTest = validateNested(
+      () => validateTestFields(input),
+      'test',
+      fields,
+    );
+
+    const sections = input.sections ?? [];
+    collectCollectionSize(
+      sections.length,
+      'sections',
+      {
+        min: MIN_SECTIONS_PER_TEST,
+        max: MAX_SECTIONS_PER_TEST,
+        singular: 'Section',
+        plural: 'Sections',
+      },
+      fields,
+    );
+
+    const normalizedSections = sections.map((section, sectionIndex) => {
+      const sectionPath = `sections.${sectionIndex}`;
+      const normalizedSection = validateNested(
+        () => validateSectionFields(section),
+        sectionPath,
+        fields,
+      );
+
+      const questions = section?.questions ?? [];
+      collectCollectionSize(
+        questions.length,
+        `${sectionPath}.questions`,
+        {
+          min: MIN_QUESTIONS_PER_SECTION,
+          max: MAX_QUESTIONS_PER_SECTION,
+          singular: 'Question',
+          plural: 'Questions',
+        },
+        fields,
+      );
+
+      const normalizedQuestions = questions.map((question, questionIndex) =>
+        validateNested(
+          () => validateQuestion(question),
+          `${sectionPath}.questions.${questionIndex}`,
+          fields,
+        ),
+      );
+
+      return { section: normalizedSection, questions: normalizedQuestions };
+    });
+
+    if (fields.length > 0 || normalizedTest === null) {
+      throw new ValidationError(VALIDATION_MESSAGE, fields);
+    }
+
+    const graph = await tests.createTestGraph({
+      title: normalizedTest.title,
+      timingMode: normalizedTest.timingMode,
+      timeLimitSeconds: normalizedTest.timeLimitSeconds,
+      priceAmount: normalizedTest.priceAmount,
+      currency: normalizedTest.currency,
+      sections: normalizedSections.map((entry, orderIndex) => {
+        // Safe by construction: an entry that failed validation recorded a field
+        // error, and a non-empty `fields` already threw above.
+        const section = entry.section as NormalizedSection;
+        return {
+          title: section.title,
+          orderIndex,
+          timeLimitSeconds: section.timeLimitSeconds,
+          correctMarkCenti: section.correctMarkCenti,
+          negativeMarkCenti: section.negativeMarkCenti,
+          priceAmount: section.priceAmount,
+          currency: section.currency,
+          questions: (entry.questions as NormalizedQuestion[]).map(
+            toQuestionData,
+          ),
+        };
+      }),
+    });
+
+    return toAdminTestDto(graph);
   }
 
   /**
@@ -613,6 +780,7 @@ export function createTestService(deps: TestServiceDeps): TestService {
 
   return {
     createTest,
+    importTest,
     editTest,
     addSection,
     editSection,
@@ -633,6 +801,7 @@ export function createDefaultTestService(): TestService {
   return createTestService({
     tests: {
       createTest: testSeriesRepository.createTest,
+      createTestGraph: testSeriesRepository.createTestGraph,
       updateTest: testSeriesRepository.updateTest,
       createSection: testSeriesRepository.createSection,
       updateSection: testSeriesRepository.updateSection,

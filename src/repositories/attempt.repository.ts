@@ -20,7 +20,6 @@ import type {
   AttemptReviewRecord,
   AttemptStateRecord,
   CompleteAttemptInput,
-  CompletedAttemptRecord,
   CreateAttemptInput,
   CreateSectionAttemptInput,
   FindActiveAttemptInput,
@@ -104,7 +103,12 @@ export function findAttemptState(
       sectionAttempts: {
         include: {
           section: {
-            select: { id: true, orderIndex: true, timeLimitSeconds: true },
+            select: {
+              id: true,
+              title: true,
+              orderIndex: true,
+              timeLimitSeconds: true,
+            },
           },
         },
         orderBy: { section: { orderIndex: 'asc' } },
@@ -259,17 +263,34 @@ export function completeAttempt(
 }
 
 /**
- * List the Learner's completed attempts for the history view, most recently
- * completed first (Req 14.1). Each row carries its parent Test's id and title;
- * the Score (`scoreCentimarks`) and `completedAt` live on the attempt itself.
- * Relies on the `@@index([userId, status])`.
+ * List the Learner's completed attempts, most recently completed first
+ * (Req 14.1), each with the full review graph. The graph is what lets the
+ * history list report a Score against its obtainable maximum and the
+ * performance view derive per-Section analytics, both without storing a single
+ * additional column. Relies on the `@@index([userId, status])`.
  */
 export function listCompletedAttempts(
   userId: string,
-): Promise<CompletedAttemptRecord[]> {
+): Promise<AttemptReviewRecord[]> {
   return getPrismaClient().testAttempt.findMany({
     where: { userId, status: 'completed' },
-    include: { test: { select: { id: true, title: true } } },
+    include: {
+      test: {
+        include: {
+          sections: {
+            orderBy: { orderIndex: 'asc' },
+            include: {
+              questions: {
+                orderBy: { orderIndex: 'asc' },
+                include: { options: { orderBy: { orderIndex: 'asc' } } },
+              },
+            },
+          },
+        },
+      },
+      sectionAttempts: true,
+      responses: true,
+    },
     orderBy: [{ completedAt: 'desc' }, { id: 'desc' }],
   });
 }

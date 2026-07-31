@@ -23,13 +23,22 @@
 //   - Every other shape — a Sectional Timing whole-Test attempt, or ANY
 //     Section-scoped attempt (bought via a Section Entitlement) — is
 //     "section-scoped": each covered Section has its own Section Attempt timed
-//     independently by that Section's Time Limit (Req 12.1). A whole-Test
-//     Sectional attempt creates one Section Attempt per Section at start (each
-//     with its Start Timestamp, Req 12.2); a Section-scoped attempt creates the
-//     single covered Section's Section Attempt regardless of the Test's Timing
-//     Mode (you are timed by the Section you purchased). The Test Attempt's
-//     status is the container status kept in sync by pause/resume and set to
-//     `completed` when every Section Attempt is completed (Req 12.7).
+//     independently by that Section's Time Limit (Req 12.1). A Section-scoped
+//     attempt creates the single covered Section's Section Attempt regardless of
+//     the Test's Timing Mode (you are timed by the Section you purchased). The
+//     Test Attempt's status is the container status kept in sync by pause/resume
+//     and set to `completed` when every Section Attempt is completed (Req 12.7).
+//
+// Sectional Timing is SEQUENTIAL: a whole-Test Sectional attempt creates one
+// Section Attempt per Section at start, but only the first (by `orderIndex`) is
+// `in_progress`; the rest are `not_started` with no clock. Exactly one Section
+// is ever active. When the active Section's Time Limit is reached — or the
+// Learner ends it early via `advanceSection` — it is closed permanently and the
+// next `not_started` Section is activated at that instant. A closed Section is
+// never reopened, so its unused time is forfeited and its Questions become
+// unanswerable. Only when no `not_started` Section remains and every Section
+// Attempt is `completed` is the whole attempt finalized (Req 12.7).
+// `settleSectionAttempts` is the single place these transitions happen.
 //
 // Marks are integer centi-marks internally (R3) and serialized as decimal marks
 // (`centimarks / CENTIMARKS_PER_MARK`); timestamps serialize ISO 8601 UTC `Z`
@@ -50,6 +59,7 @@ import * as testSeriesRepository from '../repositories/testSeries.repository';
 import * as userRepository from '../repositories/user.repository';
 import { classifyPrice } from './price.service';
 import { canAccessSection, canAccessTest } from './access.service';
+import { analyzeAttempt, buildPerformance } from './performance.service';
 import { scoreAttempt } from './scoring.service';
 import {
   accumulatedActiveSeconds,
@@ -72,6 +82,7 @@ import type {
   AttemptQuestionsDto,
   AttemptReviewDto,
   AttemptStateDto,
+  PerformanceDto,
   ReviewQuestionDto,
   SectionStateDto,
 } from '../types/domain.types';
@@ -121,6 +132,31 @@ function isOverallScoped(state: {
   test: { timingMode: string };
 }): boolean {
   return state.test.timingMode === 'overall' && state.scopedSectionId === null;
+}
+
+/**
+ * A Section Attempt is "active" when its clock owns the attempt — it is either
+ * running or temporarily paused. Under Sequential Sectional Timing at most one
+ * Section is ever active; `not_started` and `completed` Sections are not.
+ */
+function isActiveSection(sectionAttempt: { status: TimedScopeState['status'] }): boolean {
+  return (
+    sectionAttempt.status === 'in_progress' || sectionAttempt.status === 'paused'
+  );
+}
+
+/**
+ * The attempt's Section Attempts in Admin-defined Section order — the order
+ * Sequential Sectional Timing activates them in. The repository already orders
+ * them, but sorting here keeps the ordering guarantee local to the logic that
+ * depends on it (and holds for injected test doubles).
+ */
+function orderedSectionAttempts(
+  state: AttemptStateRecord,
+): AttemptStateRecord['sectionAttempts'] {
+  return [...state.sectionAttempts].sort(
+    (a, b) => a.section.orderIndex - b.section.orderIndex,
+  );
 }
 
 /**
@@ -174,14 +210,15 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
   /**
    * Map a loaded attempt state to its server-authoritative `AttemptStateDto`
    * (Req 9.1–9.3, 10.1, 10.3, 12.1). For an overall-scoped attempt the
-   * attempt's own timing is used and `sections` is empty; otherwise each Section
-   * Attempt reports its own status and remaining time, and the attempt-level
-   * remaining is the greatest remaining across the Sections (the last Section to
-   * close). All timing is derived at `now`.
+   * attempt's own timing governs and every Section mirrors it; otherwise each
+   * Section Attempt reports its own status and remaining time, the active
+   * Section is named in `currentSectionId`, and the attempt-level remaining is
+   * that Section's clock (0 once none is active). All timing is derived at `now`.
    */
   function buildStateDto(state: AttemptStateRecord, now: Date): AttemptStateDto {
     let attemptRemaining: number;
     let sections: SectionStateDto[];
+    let currentSectionId: string | null = null;
 
     if (isOverallScoped(state)) {
       attemptRemaining = remainingSeconds(
@@ -195,12 +232,17 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
       // status and remaining time (Req 12.1).
       sections = state.test.sections.map((section) => ({
         sectionId: section.id,
+        title: section.title,
+        orderIndex: section.orderIndex,
         status: state.status,
         remainingSeconds: attemptRemaining,
       }));
     } else {
-      sections = state.sectionAttempts.map((sa) => ({
+      const ordered = orderedSectionAttempts(state);
+      sections = ordered.map((sa) => ({
         sectionId: sa.sectionId,
+        title: sa.section.title,
+        orderIndex: sa.section.orderIndex,
         status: sa.status,
         remainingSeconds: remainingSeconds(
           toScope(sa),
@@ -208,10 +250,16 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
           now,
         ),
       }));
-      attemptRemaining = sections.reduce(
-        (max, s) => (s.remainingSeconds > max ? s.remainingSeconds : max),
-        0,
-      );
+      const active = ordered.find(isActiveSection);
+      currentSectionId = active?.sectionId ?? null;
+      attemptRemaining =
+        active === undefined
+          ? 0
+          : remainingSeconds(
+              toScope(active),
+              active.section.timeLimitSeconds,
+              now,
+            );
     }
 
     const dto: AttemptStateDto = {
@@ -222,6 +270,7 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
       startedAt: toIsoUtc(state.startedAt),
       remainingSeconds: attemptRemaining,
       sections,
+      currentSectionId,
     };
     if (state.status === 'completed' && state.scoreCentimarks !== null) {
       dto.scoreMarks = toMarks(state.scoreCentimarks);
@@ -306,12 +355,101 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
   }
 
   /**
+   * Close a Section Attempt permanently, banking its Accumulated Active Time at
+   * `now` (Req 12.3). A closed Section is never reopened, so any unused time is
+   * forfeited and its Questions become unanswerable.
+   */
+  async function closeSectionAttempt(
+    sectionAttempt: AttemptStateRecord['sectionAttempts'][number],
+    now: Date,
+  ): Promise<void> {
+    const closed = completeScope(toScope(sectionAttempt), now);
+    await attempts.updateSectionAttempt(sectionAttempt.id, {
+      status: 'completed',
+      accumulatedActiveSeconds: closed.accumulatedActiveSeconds,
+      lastResumedAt: null,
+      completedAt: now,
+    });
+  }
+
+  /**
+   * Drive a section-scoped attempt's Sections forward — the single choke point
+   * for every Sequential Sectional Timing transition, shared by `reconcile`,
+   * `resume`, and `advanceSection`:
+   *
+   *   1. Close every `in_progress` Section whose Time Limit has been reached.
+   *   2. If no Section is active any more but one is still `not_started`,
+   *      activate the next one by `orderIndex`, starting its clock at `now`.
+   *   3. Once no `not_started` Section remains and all are `completed`,
+   *      finalize the whole attempt (Req 12.7).
+   *
+   * Step 2 starts the next Section at `now` rather than at the exact instant the
+   * previous one expired. Because timing is reconciled lazily (R2), a Learner
+   * who closes the tab mid-Section and returns later would otherwise find the
+   * next Section already burnt down; starting at `now` gives them the Section's
+   * full Time Limit. Sections never overlap, so this concedes no extra time.
+   */
+  async function settleSectionAttempts(
+    userId: string,
+    attemptId: string,
+    state: AttemptStateRecord,
+    now: Date,
+  ): Promise<AttemptStateRecord> {
+    let current = state;
+    let changed = false;
+
+    for (const sa of orderedSectionAttempts(current)) {
+      if (
+        sa.status === 'in_progress' &&
+        isExpired(toScope(sa), sa.section.timeLimitSeconds, now)
+      ) {
+        await closeSectionAttempt(sa, now);
+        changed = true;
+      }
+    }
+    if (changed) {
+      current = await requireState(userId, attemptId);
+    }
+
+    const ordered = orderedSectionAttempts(current);
+    if (!ordered.some(isActiveSection)) {
+      const next = ordered.find((sa) => sa.status === 'not_started');
+      if (next !== undefined) {
+        await attempts.updateSectionAttempt(next.id, {
+          status: 'in_progress',
+          startedAt: now,
+          lastResumedAt: now,
+        });
+        // The container follows its active Section back to in_progress: a paused
+        // attempt whose last Section expired must not strand the new Section.
+        if (current.status !== 'in_progress') {
+          await attempts.updateAttemptTiming(attemptId, {
+            status: 'in_progress',
+          });
+        }
+        return requireState(userId, attemptId);
+      }
+    }
+
+    // Every Section has closed — finalize the attempt itself (Req 12.7).
+    if (
+      current.status !== 'completed' &&
+      ordered.length > 0 &&
+      ordered.every((sa) => sa.status === 'completed')
+    ) {
+      await finalizeAttempt(userId, attemptId, now);
+      return requireState(userId, attemptId);
+    }
+    return current;
+  }
+
+  /**
    * Load an owner-scoped attempt and reconcile its timing before acting (R2).
    * A missing/unowned attempt is a 404 (Req 8.6). A `completed` attempt is
    * terminal and returned unchanged. For an overall-scoped attempt, an expired
-   * scope is completed; for a section-scoped attempt, each expired Section
-   * Attempt is closed and, once every Section Attempt is completed, the whole
-   * attempt is finalized (Req 11.2, 12.3, 12.7). Returns the reconciled state.
+   * scope is completed; a section-scoped attempt is driven forward by
+   * `settleSectionAttempts` — expired Sections close, the next queued Section
+   * activates, and the attempt finalizes once none is left (Req 11.2, 12.3, 12.7).
    */
   async function reconcile(
     userId: string,
@@ -337,35 +475,7 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
       return state;
     }
 
-    // Section-scoped: close each expired in_progress Section Attempt.
-    let changed = false;
-    for (const sa of state.sectionAttempts) {
-      if (
-        sa.status === 'in_progress' &&
-        isExpired(toScope(sa), sa.section.timeLimitSeconds, now)
-      ) {
-        const closed = completeScope(toScope(sa), now);
-        await attempts.updateSectionAttempt(sa.id, {
-          status: 'completed',
-          accumulatedActiveSeconds: closed.accumulatedActiveSeconds,
-          lastResumedAt: null,
-          completedAt: now,
-        });
-        changed = true;
-      }
-    }
-    const current = changed ? await requireState(userId, attemptId) : state;
-
-    // Once every Section Attempt is completed, finalize the whole attempt (Req 12.7).
-    if (
-      current.status !== 'completed' &&
-      current.sectionAttempts.length > 0 &&
-      current.sectionAttempts.every((sa) => sa.status === 'completed')
-    ) {
-      await finalizeAttempt(userId, attemptId, now);
-      return requireState(userId, attemptId);
-    }
-    return current;
+    return settleSectionAttempts(userId, attemptId, state, now);
   }
 
   /** Reload an attempt's state, treating a now-missing attempt as a 404. */
@@ -439,21 +549,26 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
   }
 
   /**
-   * Create one in_progress Section Attempt per Section, each with its Start
-   * Timestamp and an open interval opened at `now` (Req 12.2).
+   * Create one Section Attempt per Section for a Sequential Sectional Timing
+   * whole-Test attempt (Req 12.2). Only the first Section in Admin-defined
+   * order starts: it gets its Start Timestamp and an interval opened at `now`.
+   * Every later Section is queued as `not_started` with no clock, and is
+   * activated by `settleSectionAttempts` when the Section before it closes.
    */
   async function createSectionAttempts(
     testAttemptId: string,
-    sections: readonly { id: string }[],
+    sections: readonly { id: string; orderIndex: number }[],
     now: Date,
   ): Promise<void> {
-    for (const section of sections) {
+    const ordered = [...sections].sort((a, b) => a.orderIndex - b.orderIndex);
+    for (const [index, section] of ordered.entries()) {
+      const isFirst = index === 0;
       await attempts.createSectionAttempt({
         testAttemptId,
         sectionId: section.id,
-        startedAt: now,
-        lastResumedAt: now,
-        status: 'in_progress',
+        startedAt: isFirst ? now : null,
+        lastResumedAt: isFirst ? now : null,
+        status: isFirst ? 'in_progress' : 'not_started',
       });
     }
   }
@@ -597,9 +712,10 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
    * attempt is not `paused` (Req 10.7). Any scope whose banked Accumulated
    * Active Time already reached its Time Limit is closed rather than reopened
    * (Req 10.5) — a Section closed under Sectional Timing is never returned to
-   * in_progress. Non-expired scopes begin a fresh active interval at `now`. When
-   * resuming closes the last open Section Attempt, the whole attempt is
-   * finalized (Req 12.7).
+   * in_progress. Non-expired scopes begin a fresh active interval at `now`.
+   * Section-scoped attempts then run through `settleSectionAttempts`, so
+   * resuming into an already-exhausted Section advances to the next queued
+   * Section (or finalizes the attempt when none is left, Req 12.7).
    */
   async function resume(
     token: string,
@@ -628,17 +744,13 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
       }
     } else {
       for (const sa of state.sectionAttempts) {
+        // `not_started` Sections stay queued and `completed` Sections stay
+        // closed; neither is ever woken by a resume (Req 10.5).
         if (sa.status !== 'paused') {
-          continue; // completed Sections stay closed; never reopened (Req 10.5).
+          continue;
         }
         if (isExpired(toScope(sa), sa.section.timeLimitSeconds, now)) {
-          const closed = completeScope(toScope(sa), now);
-          await attempts.updateSectionAttempt(sa.id, {
-            status: 'completed',
-            accumulatedActiveSeconds: closed.accumulatedActiveSeconds,
-            lastResumedAt: null,
-            completedAt: now,
-          });
+          await closeSectionAttempt(sa, now);
         } else {
           const resumed = resumeScope(toScope(sa), now);
           await attempts.updateSectionAttempt(sa.id, {
@@ -648,15 +760,100 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
           });
         }
       }
-      const current = await requireState(userId, attemptId);
-      if (current.sectionAttempts.every((sa) => sa.status === 'completed')) {
-        await finalizeAttempt(userId, attemptId, now);
-      } else {
+      let current = await requireState(userId, attemptId);
+      if (current.sectionAttempts.some(isActiveSection)) {
         await attempts.updateAttemptTiming(attemptId, { status: 'in_progress' });
+        current = await requireState(userId, attemptId);
       }
+      // Resuming may have exhausted the active Section: advance to the next
+      // queued Section, or finalize when none remains (Req 12.7).
+      return buildStateDto(
+        await settleSectionAttempts(userId, attemptId, current, now),
+        now,
+      );
     }
 
     return buildStateDto(await requireState(userId, attemptId), now);
+  }
+
+  /**
+   * The caller's current attempt state with timing reconciled first. This is the
+   * read the Test Player polls, and the one it issues the moment its display
+   * countdown reaches zero: reconciling closes the exhausted Section and
+   * activates the next one, so the Learner moves on without the attempt being
+   * finalized. Owner-scoped — a missing/unowned attempt is a 404 (Req 8.6).
+   */
+  async function getAttemptState(
+    token: string,
+    attemptId: string,
+  ): Promise<AttemptStateDto> {
+    const { userId } = await resolveCaller(token);
+    const now = deps.now();
+    return buildStateDto(await reconcile(userId, attemptId, now), now);
+  }
+
+  /**
+   * End the active Section early and move to the next one ("Submit Section &
+   * Continue"). Reconciles first, then rejects with a 422 when the attempt is
+   * not in_progress (Req 10.6-style guard) or is an Overall Timing whole-Test
+   * attempt, which has a single clock and no Sections to advance through. The
+   * active Section is closed with its time banked at `now` — forfeiting whatever
+   * was left — and `settleSectionAttempts` activates the next queued Section, or
+   * finalizes and scores the attempt when that was the last one (Req 12.7).
+   */
+  async function advanceSection(
+    token: string,
+    attemptId: string,
+  ): Promise<AttemptStateDto> {
+    const { userId } = await resolveCaller(token);
+    const now = deps.now();
+
+    // The Section the Learner was looking at when they pressed the button, read
+    // before reconciliation can move it on.
+    const before = await attempts.findAttemptState(userId, attemptId);
+    if (before === null) {
+      throw new NotFoundError('The requested Test Attempt was not found.');
+    }
+    const intendedSectionId =
+      orderedSectionAttempts(before).find(isActiveSection)?.sectionId ?? null;
+
+    const state = await reconcile(userId, attemptId, now);
+    if (state.status === 'completed') {
+      // Reconciliation may have finalized the attempt (the last Section expired
+      // as the request arrived); report the terminal state rather than erroring.
+      return buildStateDto(state, now);
+    }
+    if (state.status !== 'in_progress') {
+      throw new ValidationError(
+        'Only an in-progress attempt can move to the next Section.',
+      );
+    }
+    if (isOverallScoped(state)) {
+      throw new ValidationError(
+        'This Test is timed overall, so its Sections cannot be advanced individually.',
+      );
+    }
+
+    const active = orderedSectionAttempts(state).find(isActiveSection);
+    if (active === undefined) {
+      throw new ValidationError('There is no Section in progress to submit.');
+    }
+    if (active.sectionId !== intendedSectionId) {
+      // Reconciliation just closed the Section the Learner meant to submit (its
+      // Time Limit had quietly lapsed) and opened this one in its place. Their
+      // intent is already satisfied, so return the new Section rather than
+      // burning it too — otherwise one click would cost them two Sections.
+      return buildStateDto(state, now);
+    }
+    await closeSectionAttempt(active, now);
+
+    const settled = await settleSectionAttempts(
+      userId,
+      attemptId,
+      await requireState(userId, attemptId),
+      now,
+    );
+    return buildStateDto(settled, now);
   }
 
   /**
@@ -721,14 +918,21 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
       );
     }
 
+    // Under Sequential Sectional Timing only the one active Section accepts
+    // Responses: a `not_started` Section has not opened yet and a `completed`
+    // one is closed for good (Req 12.5, 12.6).
     if (!isOverallScoped(state)) {
       const sectionAttempt = state.sectionAttempts.find(
         (sa) => sa.sectionId === sectionId,
       );
       if (sectionAttempt === undefined || sectionAttempt.status !== 'in_progress') {
+        const reason =
+          sectionAttempt?.status === 'not_started'
+            ? 'The Section has not started yet.'
+            : 'The Section is not in progress.';
         throw new ValidationError(
           'The Section for this Question is not currently in progress.',
-          [{ field: 'questionId', reason: 'The Section is not in progress.' }],
+          [{ field: 'questionId', reason }],
         );
       }
     }
@@ -774,6 +978,10 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
    * Every completed attempt for the caller, most recently completed first
    * (Req 14.1, 14.3). Score is serialized as decimal marks and completion time
    * as ISO 8601 UTC `Z`.
+   *
+   * Each entry also carries its result summary, so the history list can report
+   * a Score against the marks that were obtainable rather than a bare mark
+   * count — a total alone tells the Learner nothing about how they did.
    */
   async function listHistory(token: string): Promise<AttemptHistoryItemDto[]> {
     const { userId } = await resolveCaller(token);
@@ -784,7 +992,24 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
       testTitle: row.test.title,
       scoreMarks: toMarks(row.scoreCentimarks ?? 0),
       completedAt: toIsoUtc(row.completedAt ?? row.createdAt),
+      summary: analyzeAttempt(row).summary,
     }));
+  }
+
+  /**
+   * The caller's performance across every completed attempt: overall totals, a
+   * per-Test trend across retakes (Req 15), and a per-Section ranking of strong
+   * and weak areas.
+   *
+   * Everything is derived at read time from the recorded Responses, each
+   * Section's marking scheme, and the banked Accumulated Active Time — no
+   * analytics are persisted, so a Learner with no completed attempts simply
+   * gets a zeroed report rather than an error.
+   */
+  async function getPerformance(token: string): Promise<PerformanceDto> {
+    const { userId } = await resolveCaller(token);
+    const rows = await attempts.listCompletedAttempts(userId);
+    return buildPerformance(rows);
   }
 
   /**
@@ -792,6 +1017,10 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
    * Question, its text, Options, Correct Option Set, and the Learner's recorded
    * Response. A missing or unowned attempt surfaces uniformly as a 404
    * (Req 14.4).
+   *
+   * Restricted to `completed` attempts: the review carries the Correct Option
+   * Set, which must never be reachable while an attempt is still open (D4,
+   * Req 13). The Test Player reads `getAttemptState` instead.
    */
   async function getAttemptReview(
     token: string,
@@ -801,6 +1030,11 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
     const review = await attempts.findAttemptForReview(userId, attemptId);
     if (review === null) {
       throw new NotFoundError('The requested Test Attempt was not found.');
+    }
+    if (review.status !== 'completed') {
+      throw new ValidationError(
+        'A Test Attempt can only be reviewed once it has been completed.',
+      );
     }
 
     const responseByQuestion = new Map<string, string[]>(
@@ -825,11 +1059,15 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
       }
     }
 
+    const { summary, sections } = analyzeAttempt(review);
+
     return {
       attemptId: review.id,
       testTitle: review.test.title,
       scoreMarks: toMarks(review.scoreCentimarks ?? 0),
       completedAt: toIsoUtc(review.completedAt ?? review.createdAt),
+      summary,
+      sections,
       questions,
     };
   }
@@ -884,12 +1122,15 @@ export function createAttemptService(deps: AttemptServiceDeps): AttemptService {
   return {
     startTest,
     startSection,
+    getAttemptState,
+    advanceSection,
     pause,
     resume,
     submitResponse,
     submitAttempt,
     retakeTest,
     listHistory,
+    getPerformance,
     getAttemptReview,
     getAttemptQuestions,
   };

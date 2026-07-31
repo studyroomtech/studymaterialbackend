@@ -45,6 +45,17 @@ export interface CreateTestData {
 }
 
 /**
+ * A complete Test graph persisted in one write by the JSON import: the Test's
+ * own fields plus every Section, each already carrying its `orderIndex` and its
+ * ordered Questions/Options. Unlike the incremental authoring path, which
+ * appends one Section at a time, this describes the whole Test up front so it
+ * can be created atomically.
+ */
+export interface CreateTestGraphData extends CreateTestData {
+  sections: CreateSectionData[];
+}
+
+/**
  * Editable Test-level fields (Req 5.5). Every field is optional so callers can
  * patch a subset; omitted fields are left unchanged and no Section is touched.
  */
@@ -157,6 +168,13 @@ export type SectionWithTest = Section & { test: Test };
 export interface TestRepository {
   /** Persist a new Test and return the created record (Req 2.1). */
   createTest(input: CreateTestData): Promise<Test>;
+  /**
+   * Persist an entire Test graph — the Test plus all its Sections, Questions,
+   * and Options — in a single atomic write, returning the ordered graph. Backs
+   * the whole-Test JSON import, where a partially created Test would be worse
+   * than none at all.
+   */
+  createTestGraph(input: CreateTestGraphData): Promise<TestGraph>;
   /** Update Test-level fields only, leaving Sections untouched (Req 5.5). */
   updateTest(id: string, input: UpdateTestData): Promise<Test>;
   /**

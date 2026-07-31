@@ -26,6 +26,7 @@ import type {
   EditQuestionInput,
   EditSectionInput,
   EditTestInput,
+  ImportTestInput,
 } from '../services/testSeries.service.types';
 import type {
   AdminQuestionResponse,
@@ -49,6 +50,29 @@ export async function createTestHandler(
     const input = req.body as CreateTestInput;
     const test = await createDefaultTestService().createTest(input);
     const body: AdminTestResponse = { test };
+    res.status(201).json(body);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * `POST /api/admin/tests/import` — configure a complete Test (its Sections,
+ * Questions, and Options) from a single JSON document and return the full
+ * authoring view. The service validates the whole payload before writing
+ * anything and persists it atomically, so a rejected import leaves no partially
+ * built Test behind; its 422 names each offending entry by its position in the
+ * document (`sections.1.questions.4.options.0.text`).
+ */
+export async function importTestHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const input = req.body as ImportTestInput;
+    const test = await createDefaultTestService().importTest(input);
+    const body: AdminTestGraphResponse = { test };
     res.status(201).json(body);
   } catch (error) {
     next(error);

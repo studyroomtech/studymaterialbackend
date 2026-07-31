@@ -8,6 +8,8 @@
 //
 //   - `POST /api/tests/:id/attempts`    — start or resume a whole-Test attempt (Req 9.1).
 //   - `POST /api/sections/:id/attempts` — start or resume a Section-scoped attempt (Req 8.2).
+//   - `GET  /api/attempts/:id/state`    — reconciled attempt state for the player.
+//   - `POST /api/attempts/:id/next-section` — close the active Section, advance.
 //   - `POST /api/attempts/:id/pause`    — pause an in_progress attempt (Req 10.1).
 //   - `POST /api/attempts/:id/resume`   — resume a paused attempt (Req 10.3).
 //   - `POST /api/attempts/:id/responses`— record a Response (Req 9.4, 11.4, 12.7).
@@ -33,6 +35,7 @@ import type {
   AttemptResultResponse,
   AttemptReviewResponse,
   AttemptStateResponse,
+  PerformanceResponse,
   SubmitResponseBody,
 } from './attempt.controller.types';
 
@@ -88,6 +91,54 @@ export async function startSectionAttemptHandler(
   try {
     const token = extractBearerToken(req.headers.authorization);
     const attempt = await createDefaultAttemptService().startSection(
+      token,
+      req.params.id,
+    );
+    const body: AttemptStateResponse = { attempt };
+    res.status(200).json(body);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * `GET /api/attempts/:id/state` — the caller's current attempt state with
+ * timing reconciled. The Test Player polls this and calls it the instant its
+ * countdown reaches zero, so an exhausted Section closes and the next one
+ * activates without finalizing the attempt.
+ */
+export async function getAttemptStateHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const token = extractBearerToken(req.headers.authorization);
+    const attempt = await createDefaultAttemptService().getAttemptState(
+      token,
+      req.params.id,
+    );
+    const body: AttemptStateResponse = { attempt };
+    res.status(200).json(body);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * `POST /api/attempts/:id/next-section` — close the active Section early and
+ * activate the next one under Sequential Sectional Timing. Unused time is
+ * forfeited; when the closed Section was the last, the service finalizes and
+ * scores the attempt and returns it `completed`.
+ */
+export async function advanceSectionHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const token = extractBearerToken(req.headers.authorization);
+    const attempt = await createDefaultAttemptService().advanceSection(
       token,
       req.params.id,
     );
@@ -238,10 +289,34 @@ export async function listAttemptHistoryHandler(
 }
 
 /**
+ * `GET /api/attempts/performance` — the caller's performance across every
+ * completed attempt: overall totals, the per-Test trend across retakes, and the
+ * per-Section strong/weak ranking. Everything is derived at read time, so a
+ * Learner with no completed attempts receives a zeroed report rather than a 404.
+ */
+export async function getPerformanceHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const token = extractBearerToken(req.headers.authorization);
+    const performance = await createDefaultAttemptService().getPerformance(
+      token,
+    );
+    const body: PerformanceResponse = { performance };
+    res.status(200).json(body);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * `GET /api/attempts/:id` — one owner-scoped completed attempt with its full
- * review graph (Req 14.2, 14.4): each in-scope Question, its Options, the
- * Correct Option Set, and the Learner's recorded Response. A missing or unowned
- * attempt surfaces uniformly as a 404.
+ * review graph (Req 14.2, 14.4): the result summary, the per-Section breakdown,
+ * and each in-scope Question with its Options, the Correct Option Set, and the
+ * Learner's recorded Response. A missing or unowned attempt surfaces uniformly
+ * as a 404.
  */
 export async function getAttemptReviewHandler(
   req: Request,

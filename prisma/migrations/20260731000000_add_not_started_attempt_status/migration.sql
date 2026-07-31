@@ -1,0 +1,14 @@
+-- Add `not_started` to the AttemptStatus enum for Sequential Sectional Timing.
+-- Under Sectional Timing every Section Attempt is created when the Test Attempt
+-- starts, but only the first Section (by orderIndex) is in_progress; the rest
+-- sit at `not_started` until the preceding Section closes (on expiry or an
+-- early "Submit Section"). Only SectionAttempt ever holds this value — a
+-- TestAttempt is created in_progress and never regresses.
+--
+-- Existing in-flight attempts are intentionally left untouched: their Sections
+-- were started in parallel under the previous model and are allowed to finish
+-- that way, so no backfill is required.
+--
+-- Postgres 12+ permits ALTER TYPE ... ADD VALUE outside an explicit transaction;
+-- Prisma applies each migration statement directly.
+ALTER TYPE "AttemptStatus" ADD VALUE 'not_started' BEFORE 'in_progress';

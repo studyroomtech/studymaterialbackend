@@ -163,7 +163,12 @@ enum TestTimingMode {
   sectional
 }
 
+// `not_started` applies only to a SectionAttempt: under Sequential Sectional
+// Timing every Section Attempt is created up front, but only the first one is
+// in_progress — the rest wait until the preceding Section closes. A TestAttempt
+// is never `not_started` (it defaults to in_progress on creation).
 enum AttemptStatus {
+  not_started
   in_progress
   paused
   completed

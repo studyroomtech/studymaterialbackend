@@ -80,6 +80,21 @@ export const OPTION_TEXT_MAX_LENGTH = 1000;
 export const MIN_OPTIONS_PER_QUESTION = 2;
 export const MIN_CORRECT_OPTIONS_PER_QUESTION = 1;
 
+// --- Whole-Test JSON import bounds ---
+// `POST /api/admin/tests/import` accepts an entire Test graph in one payload, so
+// unlike the incremental authoring endpoints it needs upper bounds: a single
+// request must not be able to ask the database for an unbounded nested write.
+// The lower bounds encode what makes an imported Test usable at all — a Test
+// needs at least one Section, and a Section at least one Question. The upper
+// bounds are generous relative to a real mock test and exist only as a ceiling.
+export const MIN_SECTIONS_PER_TEST = 1;
+export const MAX_SECTIONS_PER_TEST = 50;
+
+export const MIN_QUESTIONS_PER_SECTION = 1;
+export const MAX_QUESTIONS_PER_SECTION = 500;
+
+export const MAX_OPTIONS_PER_QUESTION = 26;
+
 // --- Product cart (Test Series purchase) ---
 // A product-cart payment covers between 1 and 50 product references (Req 7.6).
 export const PRODUCT_CART_MIN_ITEMS = 1;

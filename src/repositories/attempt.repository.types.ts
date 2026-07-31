@@ -147,21 +147,17 @@ export type AttemptStateRecord = Prisma.TestAttemptGetPayload<{
     sectionAttempts: {
       include: {
         section: {
-          select: { id: true; orderIndex: true; timeLimitSeconds: true };
+          select: {
+            id: true;
+            title: true;
+            orderIndex: true;
+            timeLimitSeconds: true;
+          };
         };
       };
     };
     responses: true;
   };
-}>;
-
-/**
- * A completed Test Attempt summarized for the history list (Req 14.1): the
- * attempt with its parent Test's id and title (Score/`completedAt` live on the
- * attempt itself).
- */
-export type CompletedAttemptRecord = Prisma.TestAttemptGetPayload<{
-  include: { test: { select: { id: true; title: true } } };
 }>;
 
 /**
@@ -227,8 +223,12 @@ export interface AttemptRepository {
   upsertResponse(input: UpsertResponseInput): Promise<Response>;
   /** Finalize an attempt (status + Score + completedAt + open Sections) in one transaction (Req 11.4, 12.7, 16.4). */
   completeAttempt(input: CompleteAttemptInput): Promise<TestAttempt>;
-  /** List the Learner's completed attempts, most recently completed first (Req 14.1). */
-  listCompletedAttempts(userId: string): Promise<CompletedAttemptRecord[]>;
+  /**
+   * List the Learner's completed attempts with their full review graphs, most
+   * recently completed first (Req 14.1). The graph backs both the history
+   * list's Score-out-of-maximum and the derived performance analytics.
+   */
+  listCompletedAttempts(userId: string): Promise<AttemptReviewRecord[]>;
   /** Load one owner-scoped completed attempt with its full review graph, or null (Req 14.2, 14.4). */
   findAttemptForReview(
     userId: string,

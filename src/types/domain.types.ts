@@ -141,8 +141,16 @@ export interface PaymentVerifyResultDto {
  * Req 9 glossary). The string values mirror the Prisma `AttemptStatus` enum and
  * form part of the persisted attempt record and the API contract. Declared as a
  * string-union to mirror `PaymentStatus`.
+ *
+ * `not_started` is reachable only by a Section Attempt under Sequential
+ * Sectional Timing — the Section exists and is queued but its clock has not
+ * begun. A Test Attempt is only ever in_progress/paused/completed.
  */
-export type AttemptStatus = 'in_progress' | 'paused' | 'completed';
+export type AttemptStatus =
+  | 'not_started'
+  | 'in_progress'
+  | 'paused'
+  | 'completed';
 
 /**
  * The Timing Mode of a Test (Req 2.2). Exactly one of Overall Timing or
@@ -198,10 +206,16 @@ export interface SectionalTestListingDto {
  * The per-Section timing/status snapshot within an attempt (used under
  * Sectional Timing, Req 12.1). `remainingSeconds` is the server-computed
  * remaining time for that Section Attempt (Section Time Limit minus its
- * Accumulated Active Time).
+ * Accumulated Active Time); a `not_started` Section reports its full Time Limit.
+ * `title` and `orderIndex` let the client render the Section rail — which
+ * Sections are done, which is live, and which are still queued — without a
+ * second round-trip.
  */
 export interface SectionStateDto {
   sectionId: string;
+  title: string;
+  /** Admin-defined position within the Test; the Sequential activation order. */
+  orderIndex: number;
   status: AttemptStatus;
   /** Server-computed remaining time for this Section (Req 12.1). */
   remainingSeconds: number;
@@ -219,10 +233,20 @@ export interface AttemptStateDto {
   timingMode: TestTimingMode;
   /** Start Timestamp, ISO 8601 UTC `Z` (Req 9.1, 16.3). */
   startedAt: string;
-  /** Server-computed remaining time for the attempt scope (Req 9.3). */
+  /**
+   * Server-computed remaining time for the governing scope (Req 9.3): the
+   * Test Attempt's own clock under Overall Timing, otherwise the currently
+   * active Section's clock (0 when no Section is active).
+   */
   remainingSeconds: number;
   /** Per-Section status + remaining time (Sectional Timing, Req 12.1). */
   sections: SectionStateDto[];
+  /**
+   * The Section whose clock is currently running (or paused) under Sequential
+   * Sectional Timing — the only Section whose Questions may be answered. `null`
+   * under Overall Timing, and once every Section has closed.
+   */
+  currentSectionId: string | null;
   /** Present only when `status === 'completed'`; decimal marks (R3, Req 13.5). */
   scoreMarks?: number;
 }
@@ -252,8 +276,70 @@ export interface ReviewOptionDto {
 }
 
 /**
+ * How a set of in-scope Questions was answered. The three counts partition
+ * `totalQuestions`: a Question is Correct only on exact Correct-Option-Set
+ * equality (Req 13.1), any other recorded Response is Incorrect (Req 13.3), and
+ * a Question with no Response is Unanswered (Req 13.4).
+ */
+export interface AnswerBreakdownDto {
+  totalQuestions: number;
+  correctCount: number;
+  incorrectCount: number;
+  unansweredCount: number;
+}
+
+/**
+ * The headline result of one completed attempt (Req 14.2). `scoreMarks` alone
+ * is not interpretable — `maxMarks` is the marks obtainable had every in-scope
+ * Question been answered correctly, which is what makes `percentage` meaningful.
+ *
+ * `percentage` may be negative, because negative marking (Req 13.3) can drive a
+ * Score below zero; it is reported as computed rather than clamped.
+ * `accuracy` is measured over answered Questions only (skipped Questions are
+ * excluded), and is `null` when nothing was answered.
+ */
+export interface AttemptSummaryDto extends AnswerBreakdownDto {
+  /** Total Score as decimal marks (R3, Req 13.5). */
+  scoreMarks: number;
+  /** Marks obtainable from every in-scope Question, as decimal marks (R3). */
+  maxMarks: number;
+  /** `scoreMarks / maxMarks` as a percentage to one decimal; `0` when `maxMarks` is 0. */
+  percentage: number;
+  /** `correctCount / (correctCount + incorrectCount)` as a percentage to one decimal; `null` when nothing was answered. */
+  accuracy: number | null;
+  /** Total Accumulated Active Time across the attempt's timed scopes (R1). */
+  timeSpentSeconds: number;
+}
+
+/**
+ * One Section's contribution to a completed attempt (Req 14.2). Each Section
+ * carries its own marking scheme (Req 3.1), so per-Section marks are not a
+ * simple division of the total and are computed from that Section's own
+ * Correct/Negative Mark.
+ */
+export interface SectionResultDto extends AnswerBreakdownDto {
+  sectionId: string;
+  title: string;
+  orderIndex: number;
+  /** Marks scored within this Section, as decimal marks (R3). */
+  scoreMarks: number;
+  /** Marks obtainable from this Section's Questions, as decimal marks (R3). */
+  maxMarks: number;
+  percentage: number;
+  accuracy: number | null;
+  /**
+   * Accumulated Active Time banked against this Section's own clock (Req 12.1),
+   * or `null` under Overall Timing, where the whole Test shares one clock and
+   * no per-Section time exists.
+   */
+  timeSpentSeconds: number | null;
+  timeLimitSeconds: number;
+}
+
+/**
  * A completed Test Attempt reviewed by its owning Learner (Req 14.2). Returns
- * every Question with its Options, Correct Option Set, and recorded Response.
+ * the headline result, the per-Section breakdown, and every Question with its
+ * Options, Correct Option Set, and recorded Response.
  */
 export interface AttemptReviewDto {
   attemptId: string;
@@ -262,12 +348,18 @@ export interface AttemptReviewDto {
   scoreMarks: number;
   /** Completion time, ISO 8601 UTC `Z` (Req 16.3). */
   completedAt: string;
+  /** The headline result: marks out of the obtainable maximum, counts, accuracy, time. */
+  summary: AttemptSummaryDto;
+  /** Per-Section results in Admin-defined order; a single entry for a Section-scoped attempt. */
+  sections: SectionResultDto[];
   questions: ReviewQuestionDto[];
 }
 
 /**
  * One entry in a Learner's attempt history: a completed Test Attempt with its
- * Test title, total Score, and completion time (Req 14.1).
+ * Test title, result summary, and completion time (Req 14.1). The summary is
+ * carried here too so the history list can show a Score against its maximum
+ * rather than a bare mark count.
  */
 export interface AttemptHistoryItemDto {
   attemptId: string;
@@ -277,6 +369,73 @@ export interface AttemptHistoryItemDto {
   scoreMarks: number;
   /** Completion time, ISO 8601 UTC `Z` (Req 16.3). */
   completedAt: string;
+  summary: AttemptSummaryDto;
+}
+
+/**
+ * One completed attempt as a point on a Test's trend line, oldest first. Retakes
+ * (Req 15) are what make this a series rather than a single value.
+ */
+export interface PerformanceAttemptPointDto {
+  attemptId: string;
+  /** Completion time, ISO 8601 UTC `Z` (Req 16.3). */
+  completedAt: string;
+  scoreMarks: number;
+  maxMarks: number;
+  percentage: number;
+  accuracy: number | null;
+  timeSpentSeconds: number;
+}
+
+/** A Test the Learner has completed at least once, with its attempts over time. */
+export interface TestPerformanceDto {
+  testId: string;
+  testTitle: string;
+  attemptCount: number;
+  /** The highest percentage across the Test's attempts. */
+  bestPercentage: number;
+  /** The percentage of the most recently completed attempt. */
+  latestPercentage: number;
+  /** Every completed attempt on this Test, oldest first. */
+  attempts: PerformanceAttemptPointDto[];
+}
+
+/**
+ * One Section rolled up across every attempt that covered it — what identifies a
+ * Learner's strong and weak areas. Ranked by `accuracy`, so a Section the
+ * Learner only ever skipped (`accuracy === null`) carries no ranking signal.
+ */
+export interface SectionPerformanceDto extends AnswerBreakdownDto {
+  sectionId: string;
+  title: string;
+  testTitle: string;
+  /** How many completed attempts included this Section. */
+  attemptCount: number;
+  accuracy: number | null;
+  percentage: number;
+}
+
+/**
+ * The Learner's performance across every completed attempt
+ * (`GET /api/attempts/performance`). Entirely derived from stored Responses,
+ * Section marking, and banked active time — nothing here is persisted.
+ */
+export interface PerformanceDto extends AnswerBreakdownDto {
+  totalAttempts: number;
+  /** Distinct Tests completed at least once (a retake does not count twice). */
+  testsCompleted: number;
+  /** Mean of the per-attempt percentages, to one decimal; `0` with no attempts. */
+  averagePercentage: number;
+  /** The best single-attempt percentage, or `null` with no attempts. */
+  bestPercentage: number | null;
+  /** Accuracy over every answered Question across all attempts; `null` when nothing was answered. */
+  overallAccuracy: number | null;
+  /** Accumulated Active Time summed across every completed attempt (R1). */
+  totalTimeSpentSeconds: number;
+  /** Per-Test results, most recently completed Test first. */
+  tests: TestPerformanceDto[];
+  /** Per-Section roll-up, most accurate first; Sections never answered come last. */
+  sections: SectionPerformanceDto[];
 }
 
 /**
