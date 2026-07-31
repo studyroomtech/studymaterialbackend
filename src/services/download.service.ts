@@ -56,11 +56,12 @@ import {
 import { issueLearnerToken, verifyToken } from './token.service';
 import { verifyPassword } from './password.service';
 import { isPaidMaterial } from './material.service';
-import { isEntitled } from './entitlement.service';
+import { isEffectivelyEntitled } from './entitlement.service';
 import * as downloadRepository from '../repositories/download.repository';
 import * as materialRepository from '../repositories/material.repository';
 import * as userRepository from '../repositories/user.repository';
 import * as entitlementRepository from '../repositories/entitlement.repository';
+import * as linkGroupRepository from '../repositories/linkGroup.repository';
 import { EMAIL_FORMAT_PATTERN } from './download.service.constant';
 import type { ApiErrorFieldDto } from '../types/api.types';
 import type { AccessTokenClaims } from '../types/auth.types';
@@ -183,6 +184,93 @@ export function createDownloadService(
   const { users, materials, downloads } = deps;
 
   /**
+   * Access gate shared by {@link prepareDownload} and {@link preparePreview}.
+   * A material is gated whenever it belongs to a Link Group that contains at
+   * least one Paid Material — so a Free Material linked to a Paid one is locked
+   * behind a Direct Entitlement to some group member, and a purchase of any
+   * paid member unlocks every member:
+   *
+   *   1. Admin bypass — a `role_admin` caller is granted regardless of Price or
+   *      Link Group membership, touching no record (Req 8.3).
+   *   2. Truly-free pass-through — the material is a Free Material AND no member
+   *      of its Link Group is a Paid Material (an ungrouped Free Material, or a
+   *      group of only Free Materials): proceed untouched (Req 8.1).
+   *   3. Direct Entitlement — the Learner holds `(userId, materialId)`: grant
+   *      via the fast path (Req 4.1).
+   *   4. Effective Entitlement — the Learner holds a Direct Entitlement for any
+   *      member of the material's Link Group: grant (Req 4.2, 10.1).
+   *   5. Otherwise → `PaymentRequiredError` (403), no content (Req 4.3, 10.3).
+   *
+   * Fail-safe (Req 5.5): if the Link Group membership cannot be resolved, the
+   * gate falls back to the material's own Price — a Free Material passes, a Paid
+   * Material requires a Direct Entitlement — never creating/modifying a record.
+   */
+  async function assertPaidAccess(
+    claims: AccessTokenClaims,
+    userId: string,
+    material: { id: string; priceAmount?: number | null },
+  ): Promise<void> {
+    // Admin bypass (Req 8.3) — no gate applies.
+    if (callerHoldsAdminRole(claims)) {
+      return;
+    }
+
+    // Resolve the Link Group closure (self + siblings) with member Prices to
+    // decide whether the group is "paid-gated". On failure, fall back to the
+    // material's own Price only (Req 5.5): a Free Material passes; a Paid
+    // Material requires a Direct Entitlement.
+    let members: { id: string; priceAmount?: number | null }[];
+    try {
+      members = await deps.linkGroups.listGroupMembersWithPrice(material.id);
+    } catch (error) {
+      logError('Link Group resolution failed; gating by material Price only', {
+        userId,
+        studyMaterialId: material.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (!isPaidMaterial(material.priceAmount)) {
+        return;
+      }
+      const directFallback = await deps.entitlements.findEntitlement(
+        userId,
+        material.id,
+      );
+      if (directFallback === null) {
+        throw new PaymentRequiredError();
+      }
+      return;
+    }
+
+    // The group closure is the resolved members, or the material itself when
+    // ungrouped. The group is paid-gated when any member is a Paid Material.
+    const memberIds = members.length > 0 ? members.map((m) => m.id) : [material.id];
+    const groupHasPaidMember =
+      isPaidMaterial(material.priceAmount) ||
+      members.some((m) => isPaidMaterial(m.priceAmount));
+
+    // Truly free (Req 8.1): a Free Material whose group has no Paid Material is
+    // open to everyone, unchanged from prior behavior.
+    if (!groupHasPaidMember) {
+      return;
+    }
+
+    // Direct-Entitlement fast path (Req 4.1).
+    const direct = await deps.entitlements.findEntitlement(userId, material.id);
+    if (direct !== null) {
+      return;
+    }
+
+    // Effective Entitlement across the group (Req 4.2, 10.1): granted when the
+    // Learner holds a Direct Entitlement for any member; otherwise denied.
+    const entitledIds = new Set(
+      await deps.entitlements.listEntitledMaterialIds(userId),
+    );
+    if (!isEffectivelyEntitled(entitledIds, memberIds, material.id)) {
+      throw new PaymentRequiredError();
+    }
+  }
+
+  /**
    * Handle a Download Gate submission (Req 6.2–6.5, 6.9). Validates the name
    * and email, upserts the User Record by email (reusing an existing record for
    * a known email — Req 6.4), and issues a learner Access Token whose lifetime
@@ -263,27 +351,11 @@ export function createDownloadService(
       );
     }
 
-    // Admin bypass (Req 17.2, 17.4): a caller holding `role_admin` is granted
-    // access to any Study Material without an Entitlement or Payment, regardless
-    // of Price. This short-circuits the Paid-Material gate below WITHOUT reading,
-    // creating, or modifying any Entitlement/Payment record; the non-admin flow
-    // is otherwise unchanged.
-    //
-    // Paid-Material entitlement gate (Req 12.2, 12.3): a Paid Material requires
-    // a Payment Entitlement for the resolved Learner. When none is held, no
-    // presigned URL is minted and no Download Record is inserted; the Learner
-    // is prompted to pay via a PAYMENT_REQUIRED (403). Free Materials are
-    // unaffected and proceed through the existing Download Gate flow.
-    if (isPaidMaterial(material.priceAmount) && !callerHoldsAdminRole(claims)) {
-      const entitlement = await deps.entitlements.findEntitlement(
-        user.id,
-        material.id,
-      );
-      const held = entitlement === null ? [] : [entitlement];
-      if (!isEntitled(held, user.id, material.id)) {
-        throw new PaymentRequiredError();
-      }
-    }
+    // Paid-Material access gate (Req 4.1–4.3, 8.1, 8.3, 10.1, 10.3): admin →
+    // free → Direct → Effective Entitlement, with the Req 5.5 fail-safe. When
+    // access is denied no presigned URL is minted and no Download Record is
+    // inserted; the Learner is prompted to pay via PAYMENT_REQUIRED (403).
+    await assertPaidAccess(claims, user.id, material);
 
     const downloadUrl = await deps.getPresignedDownloadUrl(
       material.objectKey,
@@ -348,20 +420,11 @@ export function createDownloadService(
       );
     }
 
-    // Admin bypass (Req 17.2, 17.4): mirrors prepareDownload — a `role_admin`
-    // caller previews any Study Material without an Entitlement or Payment,
-    // regardless of Price, reading/creating/modifying no record. The non-admin
-    // Paid-Material gate is otherwise unchanged (Req 12.2, 12.3).
-    if (isPaidMaterial(material.priceAmount) && !callerHoldsAdminRole(claims)) {
-      const entitlement = await deps.entitlements.findEntitlement(
-        user.id,
-        material.id,
-      );
-      const held = entitlement === null ? [] : [entitlement];
-      if (!isEntitled(held, user.id, material.id)) {
-        throw new PaymentRequiredError();
-      }
-    }
+    // Paid-Material access gate (Req 4.1–4.3, 8.1, 8.3, 10.1, 10.3): mirrors
+    // prepareDownload — admin → free → Direct → Effective Entitlement with the
+    // Req 5.5 fail-safe. A denied Learner yields PAYMENT_REQUIRED (403) and no
+    // preview URL; previews record no Download Record.
+    await assertPaidAccess(claims, user.id, material);
 
     const previewUrl = await deps.getPresignedPreviewUrl(
       material.objectKey,
@@ -400,6 +463,11 @@ export function createDefaultDownloadService(): DownloadService {
     },
     entitlements: {
       findEntitlement: entitlementRepository.findEntitlement,
+      listEntitledMaterialIds: entitlementRepository.listEntitledMaterialIds,
+    },
+    linkGroups: {
+      listGroupMemberIds: linkGroupRepository.listGroupMemberIds,
+      listGroupMembersWithPrice: linkGroupRepository.listGroupMembersWithPrice,
     },
     issueLearnerToken,
     verifyPassword,

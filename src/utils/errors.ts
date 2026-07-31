@@ -159,8 +159,11 @@ export class PaymentNotRequiredError extends AppError {
  * duplicate Razorpay order is created.
  */
 export class AlreadyEntitledError extends AppError {
-  constructor(message = 'This Study Material has already been purchased.') {
-    super(ERROR_CODES.ALREADY_ENTITLED, 409, message);
+  constructor(
+    message = 'This Study Material has already been purchased.',
+    fields?: ApiErrorFieldDto[],
+  ) {
+    super(ERROR_CODES.ALREADY_ENTITLED, 409, message, fields);
   }
 }
 

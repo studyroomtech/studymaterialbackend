@@ -94,3 +94,26 @@ export async function getMaterialHandler(
     next(error);
   }
 }
+
+/**
+ * `GET /api/materials/:id/unlock-options` — list the Paid Materials whose
+ * purchase would unlock this material through its Link Group
+ * (linked-material-entitlement). Used by the Frontend's locked-material panel:
+ * when a Free Material is locked by a paid sibling, it links the Learner to a
+ * paid note they can actually purchase. A missing material yields a not-found
+ * error; an empty list means nothing in the group is purchasable.
+ */
+export async function getUnlockOptionsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const options = await createDefaultMaterialService().getUnlockOptions(
+      req.params.id,
+    );
+    res.status(200).json({ options });
+  } catch (error) {
+    next(error);
+  }
+}

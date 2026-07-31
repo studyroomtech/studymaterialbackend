@@ -39,6 +39,8 @@ export interface CatalogMaterialInput {
   priceAmount?: number | null;
   currency?: string;
   isPaid?: boolean;
+  /** The Link Group id this material belongs to, or `null` when ungrouped. */
+  linkGroupId?: string | null;
   /** The material's average rating, or `null` when it has no ratings yet. */
   averageRating?: number | null;
   /** The number of ratings the material has received (0 when none). */

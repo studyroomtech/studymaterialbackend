@@ -55,6 +55,13 @@ import {
   renameCategoryTypeHandler,
   uploadMaterialHandler,
 } from '../controllers/admin.controller';
+import {
+  getLinkGroup,
+  linkGroupBodySchema,
+  linkGroupParamsSchema,
+  linkLinkGroup,
+  unlinkLinkGroup,
+} from '../controllers/linkGroup.controller';
 import { adminDeleteReviewHandler } from '../controllers/review.controller';
 import {
   CATEGORY_NAME_MAX_LENGTH,
@@ -149,6 +156,11 @@ const materialUploadBodySchema = z.object({
   categories: multipartCategoriesSchema,
   subjects: multipartCategoriesSchema,
   jobs: multipartCategoriesSchema,
+  // Optional Link Group references: a JSON-encoded array of existing Study
+  // Material ids to link the new material with (parsed like `categories`).
+  // Count/distinctness/existence are validated by the Link_Manager service
+  // (Req 1.1–1.6); the shape parser only extracts the string ids.
+  linkedMaterialIds: multipartCategoriesSchema,
 });
 
 // `PATCH /api/admin/materials/:id` — editable metadata; omitted fields are left
@@ -247,6 +259,35 @@ export function createAdminRouter(): Router {
     requireAdmin,
     validate({ params: removeTagParamsSchema }),
     removeTagHandler,
+  );
+
+  // --- Link Group management ---------------------------------------------
+  // Read/link/unlink a Study Material's Link Group. Guarded by requireAdmin
+  // like every Content Management Action; the chain authMiddleware →
+  // requireAdmin → validate(Zod) → controller yields the Req 11.6 precedence
+  // AUTH_REQUIRED → FORBIDDEN → VALIDATION_ERROR → NOT_FOUND. `validate`
+  // checks the `:id` param on all three and the `materialIds` body on POST;
+  // service-level count/distinctness/self-link/existence checks run afterward
+  // (Req 2.7, 2.8, 11.3–11.6).
+  router.get(
+    '/materials/:id/link-group',
+    requireAdmin,
+    validate({ params: linkGroupParamsSchema }),
+    getLinkGroup,
+  );
+
+  router.post(
+    '/materials/:id/link-group',
+    requireAdmin,
+    validate({ params: linkGroupParamsSchema, body: linkGroupBodySchema }),
+    linkLinkGroup,
+  );
+
+  router.delete(
+    '/materials/:id/link-group',
+    requireAdmin,
+    validate({ params: linkGroupParamsSchema }),
+    unlinkLinkGroup,
   );
 
   // --- Category Type management -----------------------------------------

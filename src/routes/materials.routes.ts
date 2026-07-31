@@ -33,6 +33,7 @@ import { z } from 'zod';
 
 import {
   getMaterialHandler,
+  getUnlockOptionsHandler,
   searchMaterialsHandler,
 } from '../controllers/material.controller';
 import { listPaidMaterialsHandler } from '../controllers/payment.controller';
@@ -78,6 +79,11 @@ materialsRouter.get(
   searchMaterialsHandler,
 );
 materialsRouter.get('/materials/paid', listPaidMaterialsHandler);
+materialsRouter.get(
+  '/materials/:id/unlock-options',
+  validate({ params: materialParamsSchema }),
+  getUnlockOptionsHandler,
+);
 materialsRouter.get(
   '/materials/:id',
   validate({ params: materialParamsSchema }),

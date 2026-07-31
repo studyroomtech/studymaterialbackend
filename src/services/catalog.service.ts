@@ -91,6 +91,9 @@ export function buildMaterialDto(
   if (material.isPaid !== undefined) {
     dto.isPaid = material.isPaid;
   }
+  if (material.linkGroupId !== undefined) {
+    dto.linkGroupId = material.linkGroupId;
+  }
   if (material.averageRating !== undefined) {
     dto.averageRating = material.averageRating;
   }

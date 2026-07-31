@@ -191,6 +191,13 @@ export interface PaymentEntitlementRepository {
     input: GrantProductEntitlementInput,
   ): Promise<PaymentEntitlementRecord>;
   /**
+   * List the Study Material ids the Learner holds a Direct Entitlement for.
+   * Backs the widened already-entitled precondition on a study-material
+   * purchase: Effective Entitlement is derived from this set plus each
+   * requested material's Link Group closure (Req 7.1, 7.2, 7.3).
+   */
+  listEntitledMaterialIds(userId: string): Promise<string[]>;
+  /**
    * List the Test ids the Learner already holds an Entitlement for. Backs the
    * already-entitled precondition on a product purchase (Req 7.4).
    */
@@ -228,6 +235,18 @@ export interface PaymentMaterialRepository {
  */
 export interface PaymentUserRepository {
   findUserById(id: string): Promise<PaymentUserRecord | null>;
+}
+
+/**
+ * Persistence contract for Link Group membership lookups consumed by the
+ * Payment service. Backs the widened already-entitled precondition: for each
+ * requested material the service resolves its Link Group closure (the material
+ * plus its siblings) so a Direct Entitlement for any member counts as an
+ * Effective Entitlement (Req 7.1, 7.2, 7.3). Returns an empty array for an
+ * ungrouped or missing material and never throws for "not found".
+ */
+export interface PaymentLinkGroupRepository {
+  listGroupMemberIds(materialId: string): Promise<string[]>;
 }
 
 /**
@@ -294,6 +313,11 @@ export interface PaymentServiceDeps {
   users: PaymentUserRepository;
   /** Resolve purchasable Tests/Sections for a product-cart purchase (Req 7.1, 7.7). */
   products: PaymentProductRepository;
+  /**
+   * Resolve a material's Link Group closure for the widened already-entitled
+   * precondition (Req 7.1, 7.2, 7.3).
+   */
+  linkGroups: PaymentLinkGroupRepository;
   /** Create a Razorpay order for the resolved amount/Currency (Req 12.4). */
   createOrder: RazorpayOrderCreator;
   /** Server-side Payment Signature Verification — the sole entitlement path (Req 12.15, 12.16). */

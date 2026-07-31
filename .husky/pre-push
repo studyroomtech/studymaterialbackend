@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+echo "🛠️  Running build..."
+pnpm build || { echo "❌ build failed"; exit 1; }
+
+echo "🧪 Running tests..."
+pnpm test || { echo "❌ tests failed"; exit 1; }

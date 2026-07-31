@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+echo "🔧 Running lint-fix..."
+pnpm lint-fix || { echo "❌ lint-fix failed"; exit 1; }
+
+echo "📦 Staging lint fixes..."
+git add -A
+
+echo "🔎 Running tsc..."
+pnpm typecheck || { echo "❌ tsc failed"; exit 1; }

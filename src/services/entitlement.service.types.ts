@@ -22,3 +22,11 @@ export interface EntitlementRef {
    */
   studyMaterialId: string | null;
 }
+
+// Re-exported so the pure Effective-Entitlement derivation in
+// `entitlement.service.ts` depends on its membership contract through this
+// module (Req 1.15) rather than reaching into the repository types directly.
+// A `MaterialMembership` pairs a Study Material with the Link Group it belongs
+// to (or `null` when ungrouped) and backs `effectivelyEntitledIds` (Req 6.1,
+// 6.2).
+export type { MaterialMembership } from '../repositories/linkGroup.repository.types';

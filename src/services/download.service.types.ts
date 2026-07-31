@@ -114,6 +114,33 @@ export interface DownloadEntitlementRepository {
     userId: string,
     studyMaterialId: string,
   ): Promise<EntitlementRef | null>;
+  /**
+   * List the Study Material ids the Learner holds a Direct Entitlement for.
+   * Backs the Effective-Entitlement gate: after the Direct fast path misses,
+   * the service resolves the material's Link Group closure and grants access
+   * when any member id appears in this set (Req 4.2, 10.1).
+   */
+  listEntitledMaterialIds(userId: string): Promise<string[]>;
+}
+
+/**
+ * Persistence contract for Link Group membership consumed by the download
+ * service to derive Effective Entitlement across a Link Group (Req 4.2). Given
+ * a material id it returns the ids of every member of the material's Link Group
+ * (self + siblings), or an empty array when the material is ungrouped or does
+ * not exist. Never throws for "not found"; a genuine resolution failure
+ * (thrown) triggers the gate's Direct-only fail-safe (Req 5.5).
+ */
+export interface DownloadLinkGroupRepository {
+  listGroupMemberIds(materialId: string): Promise<string[]>;
+  /**
+   * The material's Link Group members (self + siblings) with each member's
+   * Price, so the gate can tell whether the group contains a Paid Material and
+   * therefore gates an otherwise-Free member. Empty when ungrouped.
+   */
+  listGroupMembersWithPrice(
+    materialId: string,
+  ): Promise<{ id: string; priceAmount: number | null }[]>;
 }
 
 /**
@@ -132,6 +159,14 @@ export interface DownloadServiceDeps {
    * the concrete implementation wraps the Prisma-backed Entitlement repository.
    */
   entitlements: DownloadEntitlementRepository;
+  /**
+   * Link Group membership lookups used to derive Effective Entitlement across a
+   * Link Group (Req 4.2). Injected by `createDefaultDownloadService`; the
+   * concrete implementation wraps the Prisma-backed Link Group repository. When
+   * a lookup throws, the gate falls back to the Learner's Direct Entitlement
+   * only and denies propagated access (Req 5.5).
+   */
+  linkGroups: DownloadLinkGroupRepository;
   /** Issue a signed learner Access Token bound to the user id + email (Req 6.5). */
   issueLearnerToken(userId: string, email: string): string;
   /**

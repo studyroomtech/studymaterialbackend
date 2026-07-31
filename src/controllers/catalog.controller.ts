@@ -60,6 +60,7 @@ function toCatalogMaterialInput(
     tags: material.materialTags.map((materialTag) => ({
       categoryId: materialTag.tagId,
     })),
+    linkGroupId: material.linkGroupId,
     averageRating:
       material.ratingCount > 0
         ? material.ratingSum / material.ratingCount

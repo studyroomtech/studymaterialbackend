@@ -60,6 +60,7 @@ import {
 import { logError, logInfo } from "../utils/logger";
 import { getEnv } from "../config/env";
 import { classifyPrice } from "./price.service";
+import { isEffectivelyEntitled } from "./entitlement.service";
 import {
   verifyPaymentSignature,
   verifyWebhookSignature,
@@ -70,6 +71,7 @@ import * as entitlementRepository from "../repositories/entitlement.repository";
 import * as materialRepository from "../repositories/material.repository";
 import * as testSeriesRepository from "../repositories/testSeries.repository";
 import * as userRepository from "../repositories/user.repository";
+import * as linkGroupRepository from "../repositories/linkGroup.repository";
 import { WEBHOOK_EVENT_PAYMENT_CAPTURED } from "./payment.service.constant";
 import type { PaymentSignatureInput } from "./razorpay.service.types";
 import type {
@@ -144,7 +146,8 @@ export function parseWebhookEvent(
  * `createDefaultPaymentService`).
  */
 export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
-  const { payments, entitlements, materials, users, products } = deps;
+  const { payments, entitlements, materials, users, products, linkGroups } =
+    deps;
 
   /**
    * Whether the resolved token claims belong to a caller holding `role_admin` —
@@ -200,16 +203,22 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
   }
 
   /**
-   * Initiate a Payment for a Paid Material (Req 6.10, 12.4, 12.10, 12.11).
+   * Initiate a Payment for a Paid Material (Req 6.10, 12.4, 12.10, 12.11, 7.1,
+   * 7.2, 7.3).
    *
    * Enforces every precondition BEFORE creating a Razorpay order: the Learner
    * must resolve from the Access Token (else 401, Req 6.10); the material must
    * exist (else 404); a Free Material is rejected with 422 PAYMENT_NOT_REQUIRED
-   * (Req 12.10); an already-entitled Learner is rejected with 409
-   * ALREADY_ENTITLED (Req 12.11). Only then is a Razorpay order created and a
-   * Payment Record persisted with status `created` and an ISO 8601 `createdAt`
-   * (Req 12.4, 12.9). A persistence failure is logged with a timestamp and no
-   * Entitlement is granted (Req 12.14).
+   * (Req 12.10); a Learner already **Effectively Entitled** to any requested
+   * material is rejected with 409 ALREADY_ENTITLED naming each such material
+   * (Req 7.1, 7.3). Effective Entitlement widens the historic Direct-only check
+   * (Req 12.11): a Direct Entitlement for the requested material OR for any
+   * member of its Link Group already grants access, so the purchase is rejected
+   * before an order is created and no Payment Record is written / Entitlement
+   * row changed. Only then is a Razorpay order created and a Payment Record
+   * persisted with status `created` and an ISO 8601 `createdAt` (Req 12.4,
+   * 12.9). A persistence failure is logged with a timestamp and no Entitlement
+   * is granted (Req 12.14).
    */
   async function initiatePayment(
     token: string,
@@ -223,12 +232,21 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
       throw new PaymentNotRequiredError();
     }
 
+    // Resolve the Learner's directly-entitled material ids once; Effective
+    // Entitlement for each requested material is derived from this set plus the
+    // material's Link Group closure (Req 7.1, 7.2, 7.3).
+    const directlyEntitledIds = new Set(
+      await entitlements.listEntitledMaterialIds(user.id),
+    );
+
     // Resolve every requested material, summing the chargeable ones. A material
     // that doesn't exist → 404; a Free Material is skipped (nothing to charge);
-    // an already-entitled material is skipped (no double charge, Req 12.11).
+    // an Effectively-Entitled material is collected to reject the whole request
+    // (no double charge, Req 7.1, 7.3).
     let currency = DEFAULT_CURRENCY;
     let totalRupees = 0;
     const chargeableIds: string[] = [];
+    const alreadyEntitledIds: string[] = [];
 
     for (const id of requestedIds) {
       const material = await materials.findMaterialById(id);
@@ -240,8 +258,12 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
       if (classifyPrice(material.priceAmount) === 'free') {
         continue;
       }
-      const existing = await entitlements.findEntitlement(user.id, id);
-      if (existing !== null) {
+      // Widen the already-entitled precondition from Direct to Effective
+      // Entitlement: a Direct Entitlement for the material itself OR for any
+      // member of its Link Group already grants access (Req 7.1, 7.2, 7.3).
+      const groupMemberIds = await linkGroups.listGroupMemberIds(id);
+      if (isEffectivelyEntitled(directlyEntitledIds, groupMemberIds, id)) {
+        alreadyEntitledIds.push(id);
         continue;
       }
       currency = material.currency ?? DEFAULT_CURRENCY;
@@ -249,9 +271,24 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
       chargeableIds.push(id);
     }
 
-    // Nothing chargeable remains: either every item is Free (no payment
-    // required) or the Learner is already entitled to all of them (Req 12.10,
-    // 12.11).
+    // Any requested material the Learner is already Effectively Entitled to
+    // rejects the whole initiation: no Payment Record is created and the
+    // Entitlement rows are left unchanged. The error names each already-entitled
+    // material id in its `fields` (Req 7.1, 7.3).
+    if (alreadyEntitledIds.length > 0) {
+      throw new AlreadyEntitledError(
+        alreadyEntitledIds.length === 1
+          ? `You already have access to the requested Study Material '${alreadyEntitledIds[0]}'.`
+          : `You already have access to ${alreadyEntitledIds.length} of the requested Study Materials.`,
+        alreadyEntitledIds.map((id) => ({
+          field: id,
+          reason: 'You already have access to this Study Material.',
+        })),
+      );
+    }
+
+    // Nothing chargeable remains: every requested item is Free, so no payment
+    // is required (Req 12.10).
     if (chargeableIds.length === 0) {
       throw new AlreadyEntitledError();
     }
@@ -911,6 +948,7 @@ export function createDefaultPaymentService(): PaymentService {
       upsertEntitlement: entitlementRepository.upsertEntitlement,
       upsertProductEntitlement:
         entitlementRepository.upsertProductEntitlement,
+      listEntitledMaterialIds: entitlementRepository.listEntitledMaterialIds,
       listEntitledTestIds: entitlementRepository.listEntitledTestIds,
       listEntitledSectionIds: entitlementRepository.listEntitledSectionIds,
     },
@@ -953,6 +991,9 @@ export function createDefaultPaymentService(): PaymentService {
         const user = await userRepository.findUserById(id);
         return user === null ? null : { id: user.id, email: user.email };
       },
+    },
+    linkGroups: {
+      listGroupMemberIds: linkGroupRepository.listGroupMemberIds,
     },
     async createOrder(input) {
       const order = await razorpay.orders.create({

@@ -74,12 +74,28 @@ model StudyMaterial {
   ratingSum     Int           @default(0)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
+  // Link Group membership: a material belongs to at most one MaterialLinkGroup
+  // (structural at-most-one-group). null => ungrouped (existing behavior).
+  linkGroupId   String?
+  linkGroup     MaterialLinkGroup? @relation(fields: [linkGroupId], references: [id], onDelete: SetNull)
   materialTags  MaterialTag[]
   downloads     Download[]
   entitlements  Entitlement[]
   reviews       Review[]
 
   @@index([title])
+  @@index([linkGroupId])
+}
+
+// A shared-access group of two or more Study Materials. A Direct Entitlement for
+// any member grants Effective Entitlement to every member. Siblings are simply
+// the other materials sharing this group; grouping is symmetric and transitive
+// by construction (single FK on StudyMaterial).
+model MaterialLinkGroup {
+  id        String          @id @default(cuid())
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  members   StudyMaterial[]
 }
 
 model Review {

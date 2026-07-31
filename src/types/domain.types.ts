@@ -75,6 +75,12 @@ export interface MaterialDto {
   currency?: string;
   isPaid?: boolean;
   /**
+   * The id of the Link Group this material belongs to, or `null`/absent when it
+   * is ungrouped. Lets the admin UI collapse already-grouped materials into a
+   * single entry (linked-material-entitlement).
+   */
+  linkGroupId?: string | null;
+  /**
    * The material's average rating (`ratingSum / ratingCount`), or `null` when
    * it has no ratings yet. Surfaced on the catalog, search, and single-material
    * responses so the Frontend can render an aggregate badge without a separate
