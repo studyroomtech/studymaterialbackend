@@ -82,18 +82,18 @@ export async function uploadMaterialHandler(
       jobs?: string[];
       linkedMaterialIds?: string[];
     };
-    const uploaded = (req as Request & RequestWithFile).file;
+    const uploaded = (req as Request & RequestWithFile).files ?? [];
     const material = await createDefaultMaterialService().uploadMaterial({
       title,
       description,
       priceAmount,
       currency,
-      file: {
-        body: uploaded?.buffer ?? '',
-        fileName: uploaded?.originalname ?? '',
-        contentType: uploaded?.mimetype ?? 'application/octet-stream',
-        sizeBytes: uploaded?.size ?? 0,
-      },
+      files: uploaded.map((file) => ({
+        body: file.buffer,
+        fileName: file.originalname,
+        contentType: file.mimetype,
+        sizeBytes: file.size,
+      })),
     });
     // Attach the selected/typed classifications (by name) to the new material.
     // An existing value is reused; a new name is auto-created under the relevant
@@ -174,6 +174,58 @@ export async function deleteMaterialHandler(
   try {
     await createDefaultMaterialService().deleteMaterial(req.params.id);
     res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * `POST /api/admin/materials/:id/files` — append one or more files to an
+ * existing Study Material (Req 11.1). The files are attached to the request by
+ * the upload middleware (`multer.array('files')`); a missing/empty upload is
+ * rejected by the service with a validation error naming the files (Req 11.2).
+ * A missing material yields a not-found error (Req 11.4).
+ */
+export async function addMaterialFilesHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const uploaded = (req as Request & RequestWithFile).files ?? [];
+    const material = await createDefaultMaterialService().addFiles(
+      req.params.id,
+      uploaded.map((file) => ({
+        body: file.buffer,
+        fileName: file.originalname,
+        contentType: file.mimetype,
+        sizeBytes: file.size,
+      })),
+    );
+    const body: MaterialResponse = { material };
+    res.status(200).json(body);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * `DELETE /api/admin/materials/:id/files/:fileId` — remove a single file from a
+ * Study Material and delete its stored object (Req 11.3). A missing material or
+ * a file not belonging to it yields a not-found error (Req 11.4).
+ */
+export async function removeMaterialFileHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const material = await createDefaultMaterialService().removeFile(
+      req.params.id,
+      req.params.fileId,
+    );
+    const body: MaterialResponse = { material };
+    res.status(200).json(body);
   } catch (error) {
     next(error);
   }

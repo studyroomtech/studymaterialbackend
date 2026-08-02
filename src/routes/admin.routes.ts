@@ -48,8 +48,10 @@ import {
   createCategoryTypeHandler,
   deleteCategoryHandler,
   deleteCategoryTypeHandler,
+  addMaterialFilesHandler,
   deleteMaterialHandler,
   editMaterialHandler,
+  removeMaterialFileHandler,
   removeTagHandler,
   renameCategoryHandler,
   renameCategoryTypeHandler,
@@ -76,9 +78,11 @@ import { authMiddleware } from '../middleware/auth.middleware';
 import { requireAdmin } from '../middleware/requireAdmin.middleware';
 import { validate } from '../middleware/validate.middleware';
 
-// Multipart parser for the single Study Material `file` part (Req 11.1). Bytes
-// are held in memory so the material service can hand them to Object Storage;
-// the controller reads the parsed file from `req.file`.
+// Multipart parser for the Study Material `files` parts (Req 11.1). Bytes are
+// held in memory so the material service can hand them to Object Storage; the
+// controller reads the parsed files from `req.files`. `multer.array` accepts
+// one or more files under the `files` field (a single-file upload is an array
+// of one, preserving backward compatibility).
 const upload = multer({ storage: multer.memoryStorage() });
 
 // --- Zod validation schemas ------------------------------------------------
@@ -96,6 +100,13 @@ const idParamsSchema = z.object({
 // admin review moderation.
 const reviewIdParamsSchema = z.object({
   reviewId: z.string().min(1),
+});
+
+// `DELETE /api/admin/materials/:id/files/:fileId` — both a non-empty material
+// id and file id must be present before the controller runs.
+const materialFileParamsSchema = z.object({
+  id: z.string().min(1),
+  fileId: z.string().min(1),
 });
 
 // Optional multipart Price amount: on the multipart upload every field arrives
@@ -227,9 +238,27 @@ export function createAdminRouter(): Router {
   router.post(
     '/materials',
     requireAdmin,
-    upload.single('file'),
+    upload.array('files', 20),
     validate({ body: materialUploadBodySchema }),
     uploadMaterialHandler,
+  );
+
+  // Append/remove files on an existing Study Material (multi-file support). The
+  // upload middleware parses up to 20 `files` parts; the service validates that
+  // at least one usable file is present (Req 11.1–11.3).
+  router.post(
+    '/materials/:id/files',
+    requireAdmin,
+    upload.array('files', 20),
+    validate({ params: idParamsSchema }),
+    addMaterialFilesHandler,
+  );
+
+  router.delete(
+    '/materials/:id/files/:fileId',
+    requireAdmin,
+    validate({ params: materialFileParamsSchema }),
+    removeMaterialFileHandler,
   );
 
   router.patch(

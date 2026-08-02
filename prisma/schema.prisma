@@ -58,22 +58,22 @@ model Tag {
 }
 
 model StudyMaterial {
-  id            String        @id @default(cuid())
+  id            String             @id @default(cuid())
   title         String // 1–200 chars (app-validated)
-  description   String        @default("") // 0–2000 chars (app-validated)
+  description   String             @default("") // 0–2000 chars (app-validated)
   objectKey     String // R2 key (Req 1.13)
   fileName      String
   contentType   String
   fileSizeBytes Int
   priceAmount   Int? // null/0 => Free; >0 => Paid (Req 11.13–11.14). Smallest currency unit (paise).
-  currency      String        @default("INR") // Req 11.13/12: INR only (app-validated)
+  currency      String             @default("INR") // Req 11.13/12: INR only (app-validated)
   // Denormalized rating aggregates: average = ratingSum / ratingCount (null when
   // ratingCount == 0). Kept in sync transactionally on every Review write so the
   // catalog/search listings avoid per-material aggregation (N+1).
-  ratingCount   Int           @default(0)
-  ratingSum     Int           @default(0)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  ratingCount   Int                @default(0)
+  ratingSum     Int                @default(0)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
   // Link Group membership: a material belongs to at most one MaterialLinkGroup
   // (structural at-most-one-group). null => ungrouped (existing behavior).
   linkGroupId   String?
@@ -82,9 +82,30 @@ model StudyMaterial {
   downloads     Download[]
   entitlements  Entitlement[]
   reviews       Review[]
+  // All files (PDFs) belonging to this material. The StudyMaterial's own
+  // objectKey/fileName/contentType/fileSizeBytes mirror the first (primary)
+  // file for backward compatibility; `files` is the authoritative list.
+  files         MaterialFile[]
 
   @@index([title])
   @@index([linkGroupId])
+}
+
+// A single stored file (e.g. a PDF) belonging to a Study Material. A material
+// may have many files; each references its bytes in Object Storage by objectKey
+// and carries its own display metadata. `orderIndex` gives a stable order.
+model MaterialFile {
+  id              String        @id @default(cuid())
+  studyMaterialId String
+  studyMaterial   StudyMaterial @relation(fields: [studyMaterialId], references: [id], onDelete: Cascade)
+  objectKey       String
+  fileName        String
+  contentType     String
+  fileSizeBytes   Int
+  orderIndex      Int           @default(0)
+  createdAt       DateTime      @default(now())
+
+  @@index([studyMaterialId])
 }
 
 // A shared-access group of two or more Study Materials. A Direct Entitlement for

@@ -3,6 +3,7 @@
 
 import type {
   CategoryType,
+  MaterialFile,
   MaterialTag,
   StudyMaterial,
   Tag,
@@ -51,9 +52,25 @@ export type MaterialTagWithTag = MaterialTag & {
 };
 
 /**
- * A Study Material together with its resolved Tag assignments, as returned by
- * the catalog and single-material reads (Req 2.5, 3.1, 5.1).
+ * A Study Material together with its resolved Tag assignments and its ordered
+ * list of files, as returned by the catalog and single-material reads (Req 2.5,
+ * 3.1, 5.1). `files` is the authoritative list of every file (PDF) belonging to
+ * the material, including the primary file mirrored on the StudyMaterial's own
+ * columns; it is ordered by `orderIndex` then `createdAt`.
  */
 export type MaterialWithTags = StudyMaterial & {
   materialTags: MaterialTagWithTag[];
+  files: MaterialFile[];
 };
+
+/**
+ * The metadata for a single file (PDF) added to a Study Material. The file
+ * bytes live in Object Storage under `objectKey`; only the reference plus
+ * display metadata are stored in the database.
+ */
+export interface MaterialFileInput {
+  objectKey: string;
+  fileName: string;
+  contentType: string;
+  fileSizeBytes: number;
+}

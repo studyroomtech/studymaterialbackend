@@ -21,11 +21,13 @@ export interface UploadedRequestFile {
 }
 
 /**
- * An Express request that may carry a single multipart-uploaded `file`. The
- * upload middleware populates `file` on a successful upload; it is absent when
- * no file part was sent, in which case the material service rejects the upload
- * with a validation error naming the missing file (Req 11.2).
+ * An Express request that may carry multipart-uploaded files. `multer.array`
+ * populates `files` with every uploaded part; the single-file `file` field is
+ * retained for backward compatibility. When no file part is sent the material
+ * service rejects the upload with a validation error naming the missing files
+ * (Req 11.2).
  */
 export interface RequestWithFile {
   file?: UploadedRequestFile;
+  files?: UploadedRequestFile[];
 }

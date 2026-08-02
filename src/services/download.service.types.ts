@@ -89,6 +89,30 @@ export interface DownloadUserRepository {
  */
 export interface DownloadMaterialRepository {
   findMaterialById(id: string): Promise<DownloadMaterialRecord | null>;
+  /**
+   * Load a single file (PDF) belonging to a Study Material, scoped by the
+   * owning material id so a file id from another material cannot be resolved.
+   * Returns `null` (never throws) when no such file exists, so the service can
+   * return a not-found error without content.
+   */
+  findMaterialFile(
+    studyMaterialId: string,
+    fileId: string,
+  ): Promise<DownloadMaterialFileRecord | null>;
+}
+
+/**
+ * The subset of a persisted MaterialFile the download service needs to mint a
+ * presigned URL for a specific file: its id, the Object Storage Key that
+ * locates the bytes in R2, the file name presented to the browser, and its
+ * MIME type for inline preview (Req 1.13, 6.8, 5.1).
+ */
+export interface DownloadMaterialFileRecord {
+  id: string;
+  objectKey: string;
+  fileName: string;
+  contentType: string;
+  fileSizeBytes: number;
 }
 
 /**
@@ -258,5 +282,28 @@ export interface DownloadService {
   preparePreview(
     token: string,
     studyMaterialId: string,
+  ): Promise<PreparedPreview>;
+  /**
+   * Like {@link prepareDownload} but for a specific file of a Study Material.
+   * Resolves the Learner and applies the same note-level Paid-Material gate,
+   * then presigns the identified file's object and records a Download Record
+   * against the material. A file not belonging to the material yields a
+   * not-found error (Req 6.6–6.8, 9.1–9.4).
+   */
+  prepareFileDownload(
+    token: string,
+    studyMaterialId: string,
+    fileId: string,
+  ): Promise<PreparedDownload>;
+  /**
+   * Like {@link preparePreview} but for a specific file of a Study Material.
+   * Applies the same note-level Paid-Material gate and presigns the identified
+   * file inline, recording no Download Record. A file not belonging to the
+   * material yields a not-found error (Req 5.1, 12.2, 12.3).
+   */
+  prepareFilePreview(
+    token: string,
+    studyMaterialId: string,
+    fileId: string,
   ): Promise<PreparedPreview>;
 }

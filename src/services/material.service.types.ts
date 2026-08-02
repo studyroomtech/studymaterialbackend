@@ -48,6 +48,15 @@ export interface MaterialRecord {
   fileSizeBytes: number;
   tags: MaterialTagAssignment[];
   /**
+   * Every file (PDF) belonging to the material, ordered primary-first. The
+   * StudyMaterial's own `objectKey`/`fileName`/`contentType`/`fileSizeBytes`
+   * mirror the first (primary) file for backward compatibility; this list is
+   * authoritative for all files. The Object Storage Key is carried through so
+   * the service can delete each R2 object on material/file deletion, but it is
+   * never exposed in the public DTO (Req 1.13).
+   */
+  files: MaterialFileRecord[];
+  /**
    * The Paid Material's Price amount, or `null`/absent for a Free Material. A
    * strictly-positive amount marks the material as Paid, which the entitlement
    * gate uses to decide whether a Payment Entitlement is required before its
@@ -85,6 +94,19 @@ export interface UploadedFile {
 }
 
 /**
+ * A persisted file (PDF) belonging to a Study Material. Carries the Object
+ * Storage Key (never exposed in the DTO, Req 1.13) plus its display metadata
+ * so the service can presign, list, and delete it.
+ */
+export interface MaterialFileRecord {
+  id: string;
+  objectKey: string;
+  fileName: string;
+  contentType: string;
+  fileSizeBytes: number;
+}
+
+/**
  * The input to a Study Material upload: the title (1–200 chars), an optional
  * description (0–2000 chars), and the file to store (Req 11.1, 11.2).
  *
@@ -98,7 +120,13 @@ export interface UploadedFile {
 export interface UploadMaterialInput {
   title: string;
   description?: string;
-  file: UploadedFile;
+  /**
+   * The files to store (at least one required, validated by the service). The
+   * first file becomes the material's primary file (mirrored on the
+   * StudyMaterial's own columns); every file — including the first — is also
+   * recorded in the authoritative `MaterialFile` list.
+   */
+  files: UploadedFile[];
   priceAmount?: number | null;
   currency?: string | null;
 }
@@ -168,6 +196,38 @@ export interface MaterialRepository {
 
   /** Delete a Study Material by id (its Tags cascade in the schema). */
   delete(id: string): Promise<void>;
+
+  /**
+   * Append files to an existing Study Material, preserving the existing order
+   * (each new file is assigned a stable order after the current maximum).
+   */
+  addFiles(
+    studyMaterialId: string,
+    files: {
+      objectKey: string;
+      fileName: string;
+      contentType: string;
+      fileSizeBytes: number;
+    }[],
+  ): Promise<void>;
+
+  /**
+   * Load a single file belonging to the material (scoped by the owning material
+   * id), or `null` (never throws) when no such file exists.
+   */
+  findFile(
+    studyMaterialId: string,
+    fileId: string,
+  ): Promise<MaterialFileRecord | null>;
+
+  /**
+   * Delete a file row by id and return its Object Storage Key so the caller can
+   * clean up the R2 object, or `null` when the row did not exist.
+   */
+  deleteFile(fileId: string): Promise<{ objectKey: string } | null>;
+
+  /** Count the files currently attached to a Study Material. */
+  countFiles(studyMaterialId: string): Promise<number>;
 }
 
 /**
@@ -262,6 +322,19 @@ export interface MaterialService {
   uploadMaterial(input: UploadMaterialInput): Promise<MaterialDto>;
   editMaterial(id: string, input: EditMaterialInput): Promise<MaterialDto>;
   deleteMaterial(id: string): Promise<void>;
+  /**
+   * Append one or more files to an existing Study Material, storing each in
+   * Object Storage and recording it in the authoritative file list. A missing
+   * material yields a not-found error; an empty file list is rejected with a
+   * validation error. Returns the updated material DTO with its files.
+   */
+  addFiles(id: string, files: UploadedFile[]): Promise<MaterialDto>;
+  /**
+   * Remove a single file from a Study Material: delete its database row and its
+   * R2 object. A missing material or a file not belonging to it yields a
+   * not-found error. Returns the updated material DTO with its remaining files.
+   */
+  removeFile(id: string, fileId: string): Promise<MaterialDto>;
   /**
    * Return the complete metadata for an existing Study Material (Req 5.1, 5.3).
    * When the material is a Paid Material (`priceAmount > 0`), the resolved

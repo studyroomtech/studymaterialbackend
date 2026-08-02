@@ -202,7 +202,31 @@ export function isFilePresent(file: UploadedFile | null | undefined): boolean {
 
 /** Build the single-field validation payload for a missing-file rejection. */
 function missingFileFields(): ApiErrorFieldDto[] {
-  return [{ field: 'file', reason: 'a file is required.' }];
+  return [{ field: 'files', reason: 'at least one file is required.' }];
+}
+
+/**
+ * Validate that at least one file is present and that every supplied file
+ * carries a usable body, returning the files on success or throwing a
+ * `ValidationError` naming the `files` field. Runs before any storage or
+ * persistence so a rejected upload stores nothing (Req 11.2). Pure aside from
+ * the throw.
+ */
+export function validateFilesOrThrow(
+  files: UploadedFile[] | null | undefined,
+): UploadedFile[] {
+  if (
+    files === null ||
+    files === undefined ||
+    files.length === 0 ||
+    !files.every((file) => isFilePresent(file))
+  ) {
+    throw new ValidationError(
+      'The request contains one or more invalid fields.',
+      missingFileFields(),
+    );
+  }
+  return files;
 }
 
 /**
@@ -248,6 +272,12 @@ export function toMaterialDto(record: MaterialRecord): MaterialDto {
     fileName: record.fileName,
     contentType: record.contentType,
     fileSizeBytes: record.fileSizeBytes,
+    files: (record.files ?? []).map((file) => ({
+      id: file.id,
+      fileName: file.fileName,
+      contentType: file.contentType,
+      fileSizeBytes: file.fileSizeBytes,
+    })),
     priceAmount,
     currency: record.currency ?? DEFAULT_CURRENCY,
     isPaid: isPaidMaterial(priceAmount),
@@ -272,6 +302,40 @@ export function createMaterialService(
     (() => `${MATERIAL_OBJECT_KEY_PREFIX}${randomUUID()}`);
 
   /**
+   * Store each uploaded file's bytes in Object Storage under a fresh Object
+   * Storage Key, returning the persistable file metadata (key + display fields)
+   * in the same order. Storage runs only after all validation has passed.
+   */
+  async function storeFiles(
+    files: UploadedFile[],
+  ): Promise<
+    {
+      objectKey: string;
+      fileName: string;
+      contentType: string;
+      fileSizeBytes: number;
+    }[]
+  > {
+    const stored: {
+      objectKey: string;
+      fileName: string;
+      contentType: string;
+      fileSizeBytes: number;
+    }[] = [];
+    for (const file of files) {
+      const objectKey = generateObjectKey();
+      await storage.putObject(objectKey, file.body, file.contentType);
+      stored.push({
+        objectKey,
+        fileName: file.fileName,
+        contentType: file.contentType,
+        fileSizeBytes: file.sizeBytes,
+      });
+    }
+    return stored;
+  }
+
+  /**
    * Upload a new Study Material: validate the title (1–200) and that a file is
    * present, store the bytes in Object Storage under a fresh Object Storage
    * Key, then persist the metadata + key (Req 11.1, 11.2, 1.13). Validation
@@ -286,28 +350,29 @@ export function createMaterialService(
     // Validate the optional Price before touching storage/persistence so a
     // rejected Price stores nothing in R2 or the database (Req 11.13–11.15).
     const price = validatePrice(input.priceAmount, input.currency);
-    if (!isFilePresent(input.file)) {
-      throw new ValidationError(
-        'The request contains one or more invalid fields.',
-        missingFileFields(),
-      );
-    }
+    const files = validateFilesOrThrow(input.files);
 
-    const { file } = input;
-    const objectKey = generateObjectKey();
-    await storage.putObject(objectKey, file.body, file.contentType);
+    // Store every file under its own generated Object Storage Key, then persist
+    // the material with the FIRST file as the primary columns and record ALL
+    // files (including the first) in the authoritative MaterialFile list.
+    const stored = await storeFiles(files);
+    const [primary] = stored;
 
     const record = await materials.create({
       title,
       description,
-      objectKey,
-      fileName: file.fileName,
-      contentType: file.contentType,
-      fileSizeBytes: file.sizeBytes,
+      objectKey: primary.objectKey,
+      fileName: primary.fileName,
+      contentType: primary.contentType,
+      fileSizeBytes: primary.fileSizeBytes,
       priceAmount: price.amount,
       currency: price.currency,
     });
-    return toMaterialDto(record);
+    await materials.addFiles(record.id, stored);
+
+    // Re-fetch so the returned DTO reflects the persisted files.
+    const created = await materials.findById(record.id);
+    return toMaterialDto(created ?? record);
   }
 
   /**
@@ -357,7 +422,65 @@ export function createMaterialService(
       throw new NotFoundError('The requested Study Material was not found.');
     }
     await materials.delete(id);
-    await storage.deleteObject(current.objectKey);
+    // Delete every file's R2 object plus the primary object, deduped so the
+    // primary (mirrored in the file list) is not deleted twice (Req 11.3).
+    const objectKeys = new Set<string>([current.objectKey]);
+    for (const file of current.files ?? []) {
+      objectKeys.add(file.objectKey);
+    }
+    for (const objectKey of objectKeys) {
+      await storage.deleteObject(objectKey);
+    }
+  }
+
+  /**
+   * Append one or more files to an existing Study Material (Req 11.1, 1.13). The
+   * material must exist (a missing material yields a not-found error) and at
+   * least one file must be present. Each file's bytes are stored in Object
+   * Storage before the file rows are recorded, then the updated material DTO is
+   * returned with its files.
+   */
+  async function addFiles(
+    id: string,
+    files: UploadedFile[],
+  ): Promise<MaterialDto> {
+    const current = await materials.findById(id);
+    if (current === null) {
+      throw new NotFoundError('The requested Study Material was not found.');
+    }
+    const validated = validateFilesOrThrow(files);
+    const stored = await storeFiles(validated);
+    await materials.addFiles(id, stored);
+
+    const updated = await materials.findById(id);
+    return toMaterialDto(updated ?? current);
+  }
+
+  /**
+   * Remove a single file from a Study Material (Req 11.3, 1.13). The material
+   * must exist and the file must belong to it (otherwise a not-found error is
+   * thrown). The database row is deleted first, then its R2 object, and the
+   * updated material DTO is returned with its remaining files.
+   */
+  async function removeFile(
+    id: string,
+    fileId: string,
+  ): Promise<MaterialDto> {
+    const current = await materials.findById(id);
+    if (current === null) {
+      throw new NotFoundError('The requested Study Material was not found.');
+    }
+    const file = await materials.findFile(id, fileId);
+    if (file === null) {
+      throw new NotFoundError('The requested file was not found.');
+    }
+    const deleted = await materials.deleteFile(fileId);
+    if (deleted !== null) {
+      await storage.deleteObject(deleted.objectKey);
+    }
+
+    const updated = await materials.findById(id);
+    return toMaterialDto(updated ?? current);
   }
 
   /**
@@ -528,6 +651,8 @@ export function createMaterialService(
     uploadMaterial,
     editMaterial,
     deleteMaterial,
+    addFiles,
+    removeFile,
     getMaterial,
     getUnlockOptions,
   };
@@ -551,6 +676,13 @@ function toMaterialRecord(record: MaterialWithTags): MaterialRecord {
     fileName: record.fileName,
     contentType: record.contentType,
     fileSizeBytes: record.fileSizeBytes,
+    files: record.files.map((file) => ({
+      id: file.id,
+      objectKey: file.objectKey,
+      fileName: file.fileName,
+      contentType: file.contentType,
+      fileSizeBytes: file.fileSizeBytes,
+    })),
     priceAmount: record.priceAmount,
     currency: record.currency,
     ratingCount: record.ratingCount,
@@ -585,6 +717,31 @@ export function createDefaultMaterialService(): MaterialService {
       },
       async delete(id) {
         await materialRepository.deleteMaterial(id);
+      },
+      async addFiles(studyMaterialId, files) {
+        await materialRepository.addMaterialFiles(studyMaterialId, files);
+      },
+      async findFile(studyMaterialId, fileId) {
+        const file = await materialRepository.findMaterialFile(
+          studyMaterialId,
+          fileId,
+        );
+        return file === null
+          ? null
+          : {
+              id: file.id,
+              objectKey: file.objectKey,
+              fileName: file.fileName,
+              contentType: file.contentType,
+              fileSizeBytes: file.fileSizeBytes,
+            };
+      },
+      async deleteFile(fileId) {
+        const deleted = await materialRepository.deleteMaterialFile(fileId);
+        return deleted === null ? null : { objectKey: deleted.objectKey };
+      },
+      async countFiles(studyMaterialId) {
+        return materialRepository.countMaterialFiles(studyMaterialId);
       },
     },
     storage: { putObject, deleteObject },

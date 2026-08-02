@@ -6,19 +6,24 @@
 // each material's Tags down to their Category Type so the service layer can
 // group them by Category Type for the catalog (Req 2.5).
 
-import type { StudyMaterial } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import type { MaterialFile, StudyMaterial } from '@prisma/client';
 
 import { getPrismaClient } from './prismaClient';
 import type {
   CreateMaterialInput,
+  MaterialFileInput,
   MaterialWithTags,
   UpdateMaterialInput,
 } from './material.repository.types';
 
-// Include shape that resolves each MaterialTag's Tag and its Category Type.
+// Include shape that resolves each MaterialTag's Tag and its Category Type, and
+// the material's ordered list of files (primary first). Shared by every read so
+// create/find/list/update all return the resolved Tags and files.
 const TAG_INCLUDE = {
   materialTags: { include: { tag: { include: { categoryType: true } } } },
-} as const;
+  files: { orderBy: [{ orderIndex: 'asc' }, { createdAt: 'asc' }] },
+} satisfies Prisma.StudyMaterialInclude;
 
 /**
  * Persist a new Study Material's metadata and Object Storage Key (Req 11.1,
@@ -100,4 +105,68 @@ export function updateMaterial(
  */
 export function deleteMaterial(id: string): Promise<StudyMaterial> {
   return getPrismaClient().studyMaterial.delete({ where: { id } });
+}
+
+/**
+ * Append one or more files to a Study Material, assigning each a stable
+ * `orderIndex` continuing after the material's current maximum so the existing
+ * order (primary first) is preserved. Files are created in the order supplied.
+ */
+export async function addMaterialFiles(
+  studyMaterialId: string,
+  files: MaterialFileInput[],
+): Promise<void> {
+  if (files.length === 0) {
+    return;
+  }
+  const prisma = getPrismaClient();
+  const last = await prisma.materialFile.aggregate({
+    where: { studyMaterialId },
+    _max: { orderIndex: true },
+  });
+  const start = (last._max.orderIndex ?? -1) + 1;
+  await prisma.materialFile.createMany({
+    data: files.map((file, index) => ({
+      studyMaterialId,
+      objectKey: file.objectKey,
+      fileName: file.fileName,
+      contentType: file.contentType,
+      fileSizeBytes: file.fileSizeBytes,
+      orderIndex: start + index,
+    })),
+  });
+}
+
+/**
+ * Find a single file belonging to a Study Material by its id, scoped to the
+ * owning material so a file id from another material cannot be resolved.
+ * Returns `null` (never throws) when no such file exists under the material.
+ */
+export function findMaterialFile(
+  studyMaterialId: string,
+  fileId: string,
+): Promise<MaterialFile | null> {
+  return getPrismaClient().materialFile.findFirst({
+    where: { id: fileId, studyMaterialId },
+  });
+}
+
+/**
+ * Delete a file row by id and return it so the caller can clean up its Object
+ * Storage object. Returns `null` when the row does not exist rather than
+ * throwing, so a repeated/racy delete is idempotent.
+ */
+export async function deleteMaterialFile(
+  fileId: string,
+): Promise<MaterialFile | null> {
+  try {
+    return await getPrismaClient().materialFile.delete({ where: { id: fileId } });
+  } catch {
+    return null;
+  }
+}
+
+/** Count the files currently attached to a Study Material. */
+export function countMaterialFiles(studyMaterialId: string): Promise<number> {
+  return getPrismaClient().materialFile.count({ where: { studyMaterialId } });
 }

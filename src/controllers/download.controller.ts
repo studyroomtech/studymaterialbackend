@@ -125,3 +125,62 @@ export async function previewMaterialHandler(
     next(error);
   }
 }
+
+/**
+ * `POST /api/materials/:id/files/:fileId/download` — resolve the Learner from
+ * the Bearer Access Token, record the download, and return a presigned R2 GET
+ * URL for the identified file of the Study Material (Req 6.6–6.8, 9.1–9.3).
+ * Mirrors {@link downloadMaterialHandler}, passing the `:fileId` route param.
+ */
+export async function downloadMaterialFileHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const token = extractBearerToken(req.headers.authorization);
+    const prepared = await createDefaultDownloadService().prepareFileDownload(
+      token,
+      req.params.id,
+      req.params.fileId,
+    );
+    const body: DownloadResponse = {
+      downloadUrl: prepared.downloadUrl,
+      fileName: prepared.fileName,
+      expiresInSeconds: prepared.expiresInSeconds,
+    };
+    res.status(200).json(body);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * `POST /api/materials/:id/files/:fileId/preview` — resolve the Learner from
+ * the Bearer Access Token and return a short-lived inline URL for previewing
+ * the identified file (Req 5.1). Mirrors {@link previewMaterialHandler} but
+ * records no Download Record and passes the `:fileId` route param.
+ */
+export async function previewMaterialFileHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const token = extractBearerToken(req.headers.authorization);
+    const prepared = await createDefaultDownloadService().prepareFilePreview(
+      token,
+      req.params.id,
+      req.params.fileId,
+    );
+    const body: PreviewResponse = {
+      previewUrl: prepared.previewUrl,
+      fileName: prepared.fileName,
+      contentType: prepared.contentType,
+      expiresInSeconds: prepared.expiresInSeconds,
+    };
+    res.status(200).json(body);
+  } catch (error) {
+    next(error);
+  }
+}

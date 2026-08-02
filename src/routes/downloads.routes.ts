@@ -24,7 +24,9 @@ import { Router } from 'express';
 import { z } from 'zod';
 
 import {
+  downloadMaterialFileHandler,
   downloadMaterialHandler,
+  previewMaterialFileHandler,
   previewMaterialHandler,
   submitGateHandler,
 } from '../controllers/download.controller';
@@ -66,6 +68,15 @@ const downloadParamsSchema = z.object({
 });
 
 /**
+ * Params schema for the per-file download/preview endpoints — a non-empty
+ * material id and file id must both be present before the controller runs.
+ */
+const fileDownloadParamsSchema = z.object({
+  id: z.string().min(1),
+  fileId: z.string().min(1),
+});
+
+/**
  * Router exposing the public Download Gate and tracked-download endpoints.
  * Mount at `/api` so the effective routes are `POST /api/downloads/gate` and
  * `POST /api/materials/:id/download`.
@@ -87,6 +98,16 @@ downloadsRouter.post(
   '/materials/:id/preview',
   validate({ params: downloadParamsSchema }),
   previewMaterialHandler,
+);
+downloadsRouter.post(
+  '/materials/:id/files/:fileId/download',
+  validate({ params: fileDownloadParamsSchema }),
+  downloadMaterialFileHandler,
+);
+downloadsRouter.post(
+  '/materials/:id/files/:fileId/preview',
+  validate({ params: fileDownloadParamsSchema }),
+  previewMaterialFileHandler,
 );
 
 export { downloadsRouter };

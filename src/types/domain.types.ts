@@ -71,6 +71,13 @@ export interface MaterialDto {
   fileName?: string;
   contentType?: string;
   fileSizeBytes?: number;
+  /**
+   * Every file (PDF) belonging to the material, ordered primary-first. The
+   * top-level `fileName`/`contentType`/`fileSizeBytes` mirror the first
+   * (primary) file for backward compatibility; `files` is the authoritative
+   * list. The Object Storage Key is never exposed (Req 1.13).
+   */
+  files?: MaterialFileDto[];
   priceAmount?: number | null;
   currency?: string;
   isPaid?: boolean;
@@ -89,6 +96,19 @@ export interface MaterialDto {
   averageRating?: number | null;
   /** The number of ratings the material has received (0 when none). */
   reviewCount?: number;
+}
+
+/**
+ * A single file (PDF) belonging to a Study Material as surfaced to the
+ * Frontend: its id and display metadata. The Object Storage Key is never
+ * included in responses (Req 1.13); callers presign a specific file by id
+ * through the download endpoints.
+ */
+export interface MaterialFileDto {
+  id: string;
+  fileName: string;
+  contentType: string;
+  fileSizeBytes: number;
 }
 
 /**

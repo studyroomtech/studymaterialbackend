@@ -440,7 +440,142 @@ export function createDownloadService(
     };
   }
 
-  return { submitGate, prepareDownload, preparePreview };
+  /**
+   * Resolve the Learner and material, apply the SAME note-level Paid-Material
+   * gate as {@link prepareDownload}, then presign a specific file of the
+   * material and record a Download Record against the material (Req 6.6–6.8,
+   * 9.1–9.4). A file not belonging to the material yields a 404. Mirrors
+   * {@link prepareDownload} exactly, differing only in resolving and presigning
+   * the identified file rather than the primary columns.
+   */
+  async function prepareFileDownload(
+    token: string,
+    studyMaterialId: string,
+    fileId: string,
+  ): Promise<PreparedDownload> {
+    const claims = deps.verifyToken(token);
+    if (
+      claims === null ||
+      claims.role !== ROLE_COMMON ||
+      typeof claims.sub !== 'string'
+    ) {
+      throw new AuthRequiredError(
+        'A valid Access Token is required to download.',
+      );
+    }
+
+    const user = await users.findUserById(claims.sub);
+    if (user === null) {
+      throw new AuthRequiredError(
+        'A valid Access Token is required to download.',
+      );
+    }
+
+    const material = await materials.findMaterialById(studyMaterialId);
+    if (material === null) {
+      throw new NotFoundError(
+        `The requested Study Material '${studyMaterialId}' was not found.`,
+      );
+    }
+
+    await assertPaidAccess(claims, user.id, material);
+
+    const file = await materials.findMaterialFile(studyMaterialId, fileId);
+    if (file === null) {
+      throw new NotFoundError(
+        `The requested file '${fileId}' was not found.`,
+      );
+    }
+
+    const downloadUrl = await deps.getPresignedDownloadUrl(
+      file.objectKey,
+      file.fileName,
+    );
+
+    try {
+      await downloads.createDownload(user.id, material.id);
+    } catch (error) {
+      logError('Failed to persist Download Record', {
+        userId: user.id,
+        studyMaterialId: material.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw new InternalError();
+    }
+
+    return {
+      downloadUrl,
+      fileName: file.fileName,
+      expiresInSeconds: deps.presignedUrlTtlSeconds,
+    };
+  }
+
+  /**
+   * Resolve the Learner and material, apply the SAME note-level Paid-Material
+   * gate as {@link preparePreview}, then presign a specific file of the
+   * material inline (Req 5.1, 12.2, 12.3). Records no Download Record. A file
+   * not belonging to the material yields a 404.
+   */
+  async function prepareFilePreview(
+    token: string,
+    studyMaterialId: string,
+    fileId: string,
+  ): Promise<PreparedPreview> {
+    const claims = deps.verifyToken(token);
+    if (
+      claims === null ||
+      claims.role !== ROLE_COMMON ||
+      typeof claims.sub !== 'string'
+    ) {
+      throw new AuthRequiredError(
+        'A valid Access Token is required to preview.',
+      );
+    }
+
+    const user = await users.findUserById(claims.sub);
+    if (user === null) {
+      throw new AuthRequiredError(
+        'A valid Access Token is required to preview.',
+      );
+    }
+
+    const material = await materials.findMaterialById(studyMaterialId);
+    if (material === null) {
+      throw new NotFoundError(
+        `The requested Study Material '${studyMaterialId}' was not found.`,
+      );
+    }
+
+    await assertPaidAccess(claims, user.id, material);
+
+    const file = await materials.findMaterialFile(studyMaterialId, fileId);
+    if (file === null) {
+      throw new NotFoundError(
+        `The requested file '${fileId}' was not found.`,
+      );
+    }
+
+    const previewUrl = await deps.getPresignedPreviewUrl(
+      file.objectKey,
+      file.fileName,
+      file.contentType,
+    );
+
+    return {
+      previewUrl,
+      fileName: file.fileName,
+      contentType: file.contentType ?? '',
+      expiresInSeconds: deps.presignedUrlTtlSeconds,
+    };
+  }
+
+  return {
+    submitGate,
+    prepareDownload,
+    preparePreview,
+    prepareFileDownload,
+    prepareFilePreview,
+  };
 }
 
 /**
@@ -457,6 +592,21 @@ export function createDefaultDownloadService(): DownloadService {
     },
     materials: {
       findMaterialById: materialRepository.findMaterialById,
+      async findMaterialFile(studyMaterialId, fileId) {
+        const file = await materialRepository.findMaterialFile(
+          studyMaterialId,
+          fileId,
+        );
+        return file === null
+          ? null
+          : {
+              id: file.id,
+              objectKey: file.objectKey,
+              fileName: file.fileName,
+              contentType: file.contentType,
+              fileSizeBytes: file.fileSizeBytes,
+            };
+      },
     },
     downloads: {
       createDownload: downloadRepository.createDownload,
