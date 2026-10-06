@@ -35,6 +35,12 @@ export const TITLE_MAX_LENGTH = 200;
 export const DESCRIPTION_MIN_LENGTH = 0;
 export const DESCRIPTION_MAX_LENGTH = 2000;
 
+export const MAX_MATERIAL_FILE_SIZE_BYTES = 50 * 1024 * 1024;
+
+export const MAX_MATERIAL_FILES_PER_REQUEST = 10;
+
+export const MIN_MATERIAL_FILES = 1;
+
 // --- Category Type / Category names ---
 export const CATEGORY_TYPE_NAME_MIN_LENGTH = 1;
 export const CATEGORY_TYPE_NAME_MAX_LENGTH = 100;

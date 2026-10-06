@@ -176,6 +176,10 @@ export interface UpdateMaterialRecordInput {
   priceAmount?: number | null;
   /** Validated Price Currency (defaults to INR) (Req 11.13). */
   currency?: string;
+  objectKey?: string;
+  fileName?: string;
+  contentType?: string;
+  fileSizeBytes?: number;
 }
 
 /**

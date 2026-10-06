@@ -46,6 +46,7 @@ import { randomUUID } from 'node:crypto';
 import {
   DESCRIPTION_MAX_LENGTH,
   DESCRIPTION_MIN_LENGTH,
+  MIN_MATERIAL_FILES,
   TITLE_MAX_LENGTH,
   TITLE_MIN_LENGTH,
 } from '../constants/limits.constant';
@@ -68,6 +69,7 @@ import type { MaterialWithTags } from '../repositories/material.repository.types
 import { MATERIAL_OBJECT_KEY_PREFIX } from './material.service.constant';
 import type {
   EditMaterialInput,
+  MaterialFileRecord,
   MaterialRecord,
   MaterialService,
   MaterialServiceDeps,
@@ -203,6 +205,15 @@ export function isFilePresent(file: UploadedFile | null | undefined): boolean {
 /** Build the single-field validation payload for a missing-file rejection. */
 function missingFileFields(): ApiErrorFieldDto[] {
   return [{ field: 'files', reason: 'at least one file is required.' }];
+}
+
+function lastFileFields(): ApiErrorFieldDto[] {
+  return [
+    {
+      field: 'files',
+      reason: `a Study Material must keep at least ${MIN_MATERIAL_FILES} file.`,
+    },
+  ];
 }
 
 /**
@@ -456,12 +467,18 @@ export function createMaterialService(
     return toMaterialDto(updated ?? current);
   }
 
-  /**
-   * Remove a single file from a Study Material (Req 11.3, 1.13). The material
-   * must exist and the file must belong to it (otherwise a not-found error is
-   * thrown). The database row is deleted first, then its R2 object, and the
-   * updated material DTO is returned with its remaining files.
-   */
+  function promotePrimaryFile(
+    id: string,
+    file: MaterialFileRecord,
+  ): Promise<MaterialRecord> {
+    return materials.update(id, {
+      objectKey: file.objectKey,
+      fileName: file.fileName,
+      contentType: file.contentType,
+      fileSizeBytes: file.fileSizeBytes,
+    });
+  }
+
   async function removeFile(
     id: string,
     fileId: string,
@@ -474,12 +491,29 @@ export function createMaterialService(
     if (file === null) {
       throw new NotFoundError('The requested file was not found.');
     }
+
+    const fileCount = await materials.countFiles(id);
+    if (fileCount <= MIN_MATERIAL_FILES) {
+      throw new ValidationError(
+        'The request contains one or more invalid fields.',
+        lastFileFields(),
+      );
+    }
+
+    const isRemovingPrimaryFile = current.objectKey === file.objectKey;
+
     const deleted = await materials.deleteFile(fileId);
     if (deleted !== null) {
       await storage.deleteObject(deleted.objectKey);
     }
 
     const updated = await materials.findById(id);
+    const [nextPrimaryFile] = updated?.files ?? [];
+
+    if (isRemovingPrimaryFile && nextPrimaryFile !== undefined) {
+      return toMaterialDto(await promotePrimaryFile(id, nextPrimaryFile));
+    }
+
     return toMaterialDto(updated ?? current);
   }
 

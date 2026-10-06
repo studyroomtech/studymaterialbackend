@@ -23,10 +23,10 @@
 // itself require an admin token. It still passes through `authMiddleware` (the
 // router-level default) and Zod validation.
 //
-// Study Material upload is multipart: `multer` (in-memory storage) parses the
-// single `file` part and the accompanying text fields, populating `req.file`
-// and `req.body` before validation and the controller run. Both upload and edit
-// accept an optional Price (`priceAmount` + `currency`): on the multipart
+// Study Material upload is multipart: `uploadMaterialFiles` parses the `files`
+// parts and the accompanying text fields before validation and the controller
+// run. Both upload and edit accept an optional Price (`priceAmount` +
+// `currency`): on the multipart
 // upload the amount arrives as a text field and is coerced to a number here,
 // while on the JSON edit it arrives as a number/`null`. Authoritative bounds
 // and Currency validation is performed by `material.service` via
@@ -38,7 +38,6 @@
 // and attaching the central error handler is the app-assembly step (task 9.4).
 
 import { Router } from 'express';
-import multer from 'multer';
 import { z } from 'zod';
 
 import {
@@ -76,14 +75,8 @@ import {
 } from '../constants/limits.constant';
 import { authMiddleware } from '../middleware/auth.middleware';
 import { requireAdmin } from '../middleware/requireAdmin.middleware';
+import { uploadMaterialFiles } from '../middleware/upload.middleware';
 import { validate } from '../middleware/validate.middleware';
-
-// Multipart parser for the Study Material `files` parts (Req 11.1). Bytes are
-// held in memory so the material service can hand them to Object Storage; the
-// controller reads the parsed files from `req.files`. `multer.array` accepts
-// one or more files under the `files` field (a single-file upload is an array
-// of one, preserving backward compatibility).
-const upload = multer({ storage: multer.memoryStorage() });
 
 // --- Zod validation schemas ------------------------------------------------
 //
@@ -233,23 +226,19 @@ export function createAdminRouter(): Router {
   router.post('/login', validate({ body: loginBodySchema }), adminLoginHandler);
 
   // --- Study Material CRUD ----------------------------------------------
-  // Multipart create: multer parses the `file` part and text fields before
-  // validation runs (Req 11.1–11.2).
   router.post(
     '/materials',
     requireAdmin,
-    upload.array('files', 20),
+    uploadMaterialFiles,
     validate({ body: materialUploadBodySchema }),
     uploadMaterialHandler,
   );
 
-  // Append/remove files on an existing Study Material (multi-file support). The
-  // upload middleware parses up to 20 `files` parts; the service validates that
-  // at least one usable file is present (Req 11.1–11.3).
+  // Append/remove files on an existing Study Material (multi-file support).
   router.post(
     '/materials/:id/files',
     requireAdmin,
-    upload.array('files', 20),
+    uploadMaterialFiles,
     validate({ params: idParamsSchema }),
     addMaterialFilesHandler,
   );

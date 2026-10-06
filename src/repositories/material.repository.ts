@@ -94,6 +94,14 @@ export function updateMaterial(
         ? { priceAmount: input.priceAmount }
         : {}),
       ...(input.currency !== undefined ? { currency: input.currency } : {}),
+      ...(input.objectKey !== undefined ? { objectKey: input.objectKey } : {}),
+      ...(input.fileName !== undefined ? { fileName: input.fileName } : {}),
+      ...(input.contentType !== undefined
+        ? { contentType: input.contentType }
+        : {}),
+      ...(input.fileSizeBytes !== undefined
+        ? { fileSizeBytes: input.fileSizeBytes }
+        : {}),
     },
     include: TAG_INCLUDE,
   });
