@@ -15,6 +15,7 @@
 import type { NextFunction, Request, Response } from 'express';
 
 import { listCategoryTypesWithCategories } from '../repositories/categoryType.repository';
+import { countDownloadersByMaterial } from '../repositories/download.repository';
 import { listMaterials } from '../repositories/material.repository';
 import { buildCatalog } from '../services/catalog.service';
 import type {
@@ -52,6 +53,7 @@ function toCategoryTypeDto(
  */
 function toCatalogMaterialInput(
   material: MaterialWithTags,
+  downloadCounts: ReadonlyMap<string, number>,
 ): CatalogMaterialInput {
   return {
     id: material.id,
@@ -66,6 +68,7 @@ function toCatalogMaterialInput(
         ? material.ratingSum / material.ratingCount
         : null,
     reviewCount: material.ratingCount,
+    downloadCount: downloadCounts.get(material.id) ?? 0,
   };
 }
 
@@ -76,14 +79,17 @@ function toCatalogMaterialInput(
  * identical catalog shape (Req 2.5, 3.1).
  */
 export async function loadCatalog(): Promise<CatalogResponse> {
-  const [categoryTypes, materials] = await Promise.all([
+  const [categoryTypes, materials, downloadCounts] = await Promise.all([
     listCategoryTypesWithCategories(),
     listMaterials(),
+    countDownloadersByMaterial(),
   ]);
 
   const input: CatalogInput = {
     categoryTypes: categoryTypes.map(toCategoryTypeDto),
-    materials: materials.map(toCatalogMaterialInput),
+    materials: materials.map((material) =>
+      toCatalogMaterialInput(material, downloadCounts),
+    ),
   };
 
   return buildCatalog(input);

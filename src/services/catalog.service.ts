@@ -100,6 +100,9 @@ export function buildMaterialDto(
   if (material.reviewCount !== undefined) {
     dto.reviewCount = material.reviewCount;
   }
+  if (material.downloadCount !== undefined) {
+    dto.downloadCount = material.downloadCount;
+  }
 
   return dto;
 }

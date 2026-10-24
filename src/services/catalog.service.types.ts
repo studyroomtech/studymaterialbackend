@@ -45,6 +45,8 @@ export interface CatalogMaterialInput {
   averageRating?: number | null;
   /** The number of ratings the material has received (0 when none). */
   reviewCount?: number;
+  /** The number of unique Learners who downloaded the material (0 when none). */
+  downloadCount?: number;
 }
 
 /**

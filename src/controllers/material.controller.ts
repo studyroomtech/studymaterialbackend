@@ -18,6 +18,7 @@
 import type { NextFunction, Request, Response } from 'express';
 
 import { ROLE_ADMIN } from '../constants/roles.constant';
+import { countDownloadersByMaterial } from '../repositories/download.repository';
 import { createDefaultMaterialService } from '../services/material.service';
 import { searchMaterials } from '../services/search.service';
 import { loadCatalog } from './catalog.controller';
@@ -87,9 +88,14 @@ export async function getMaterialHandler(
       req.auth.userId,
       req.auth.role === ROLE_ADMIN,
     );
+    // Counted only after the access gate passed, so a denied caller costs no
+    // extra query.
+    const downloadCounts = await countDownloadersByMaterial([material.id]);
     // Return the material unwrapped (fields at top level) as documented for
     // this endpoint, so the Frontend Project consumes it directly.
-    res.status(200).json(material);
+    res
+      .status(200)
+      .json({ ...material, downloadCount: downloadCounts.get(material.id) ?? 0 });
   } catch (error) {
     next(error);
   }
