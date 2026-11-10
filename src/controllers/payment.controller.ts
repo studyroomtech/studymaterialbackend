@@ -37,6 +37,7 @@ import { listMembershipsForMaterials } from '../repositories/linkGroup.repositor
 import { createDefaultPaymentService } from '../services/payment.service';
 import { effectivelyEntitledIds } from '../services/entitlement.service';
 import { classifyPrice } from '../services/price.service';
+import { toThumbnailDtos } from '../services/material.service';
 import { DEFAULT_CURRENCY } from '../constants/payment.constant';
 import type { MaterialWithTags } from '../repositories/material.repository.types';
 import type {
@@ -100,6 +101,7 @@ function toPaidMaterialDto(
     currency: material.currency ?? DEFAULT_CURRENCY,
     isPaid: true,
     isEntitled: entitledIds.has(material.id),
+    thumbnails: toThumbnailDtos(material.thumbnails),
   };
 }
 

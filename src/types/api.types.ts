@@ -9,6 +9,7 @@
 import type {
   CategoryTypeDto,
   MaterialDto,
+  MaterialThumbnailDto,
   PaymentStatus,
   SectionalTestListingDto,
   TestSeriesListingDto,
@@ -289,6 +290,8 @@ export interface PaidMaterialDto {
    * from the caller's Access Token; `false` for an unauthenticated caller.
    */
   isEntitled: boolean;
+  /** The material's thumbnail images in upload order (empty when none). */
+  thumbnails: MaterialThumbnailDto[];
 }
 
 /**

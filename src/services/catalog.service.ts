@@ -82,6 +82,9 @@ export function buildMaterialDto(
   if (material.fileSizeBytes !== undefined) {
     dto.fileSizeBytes = material.fileSizeBytes;
   }
+  if (material.thumbnails !== undefined) {
+    dto.thumbnails = material.thumbnails;
+  }
   if (material.priceAmount !== undefined) {
     dto.priceAmount = material.priceAmount;
   }

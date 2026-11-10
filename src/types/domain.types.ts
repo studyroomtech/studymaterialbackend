@@ -78,6 +78,11 @@ export interface MaterialDto {
    * list. The Object Storage Key is never exposed (Req 1.13).
    */
   files?: MaterialFileDto[];
+  /**
+   * The material's thumbnail images in upload order (empty when none). Public:
+   * returned even when the material's content is payment-gated.
+   */
+  thumbnails?: MaterialThumbnailDto[];
   priceAmount?: number | null;
   currency?: string;
   isPaid?: boolean;
@@ -102,6 +107,13 @@ export interface MaterialDto {
    * Learner count once. Admin-only: absent for every non-admin caller.
    */
   downloadCount?: number;
+}
+
+/** A Study Material thumbnail image as surfaced to the Frontend. */
+export interface MaterialThumbnailDto {
+  id: string;
+  /** Path relative to the API origin, e.g. `/api/thumbnails/<id>`. */
+  url: string;
 }
 
 /**

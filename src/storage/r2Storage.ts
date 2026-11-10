@@ -9,9 +9,12 @@
 // mode; in local mode the filesystem implementation in `localStorage.ts` is
 // used instead.
 
+import type { Readable } from 'node:stream';
+
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  NoSuchKey,
   PutObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
@@ -120,4 +123,26 @@ export async function getPresignedPreviewUrl(
   return getSignedUrl(getR2Client(), command, {
     expiresIn: presignedUrlTtlSeconds,
   });
+}
+
+/**
+ * Open a read stream for the R2 object under `objectKey`, or `null` when it
+ * does not exist. Used to proxy public thumbnail images.
+ */
+export async function openObjectStream(
+  objectKey: string,
+): Promise<Readable | null> {
+  const { r2 } = getEnv();
+  try {
+    const response = await getR2Client().send(
+      new GetObjectCommand({ Bucket: r2.bucket, Key: objectKey }),
+    );
+    // In Node the SDK returns the body as an `IncomingMessage` (a Readable).
+    return (response.Body as Readable | undefined) ?? null;
+  } catch (error) {
+    if (error instanceof NoSuchKey) {
+      return null;
+    }
+    throw error;
+  }
 }

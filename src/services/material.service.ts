@@ -46,6 +46,8 @@ import { randomUUID } from 'node:crypto';
 import {
   DESCRIPTION_MAX_LENGTH,
   DESCRIPTION_MIN_LENGTH,
+  MAX_THUMBNAIL_SIZE_BYTES,
+  MAX_THUMBNAILS_PER_MATERIAL,
   MIN_MATERIAL_FILES,
   TITLE_MAX_LENGTH,
   TITLE_MIN_LENGTH,
@@ -64,15 +66,26 @@ import { logError } from '../utils/logger';
 import { classifyPrice, validatePrice } from './price.service';
 import { isEffectivelyEntitled, isEntitled } from './entitlement.service';
 import type { ApiErrorFieldDto } from '../types/api.types';
-import type { MaterialDto, TagsByCategoryType } from '../types/domain.types';
+import type {
+  MaterialDto,
+  MaterialThumbnailDto,
+  TagsByCategoryType,
+} from '../types/domain.types';
 import type { MaterialWithTags } from '../repositories/material.repository.types';
-import { MATERIAL_OBJECT_KEY_PREFIX } from './material.service.constant';
+import {
+  MATERIAL_OBJECT_KEY_PREFIX,
+  THUMBNAIL_OBJECT_KEY_PREFIX,
+  THUMBNAIL_PUBLIC_PATH,
+  THUMBNAIL_SIGNATURES,
+  THUMBNAILS_FIELD,
+} from './material.service.constant';
 import type {
   EditMaterialInput,
   MaterialFileRecord,
   MaterialRecord,
   MaterialService,
   MaterialServiceDeps,
+  MaterialThumbnailRecord,
   UnlockOptionDto,
   UpdateMaterialRecordInput,
   UploadedFile,
@@ -241,6 +254,74 @@ export function validateFilesOrThrow(
 }
 
 /**
+ * Detect a thumbnail's image format from its leading bytes, returning the
+ * content type to store and serve, or `null` when the bytes are not a JPEG,
+ * PNG, or WebP image. The client-declared MIME type is deliberately ignored so
+ * the public thumbnail route can only ever serve real images. Pure.
+ */
+export function detectThumbnailContentType(
+  body: UploadedFile['body'],
+): string | null {
+  if (!(body instanceof Uint8Array)) {
+    return null;
+  }
+  const match = THUMBNAIL_SIGNATURES.find((signature) =>
+    signature.parts.every((part) =>
+      part.bytes.every((byte, index) => body[part.offset + index] === byte),
+    ),
+  );
+  return match?.contentType ?? null;
+}
+
+/** Map thumbnail records to their public DTOs (id + serving path). Pure. */
+export function toThumbnailDtos(
+  thumbnails: readonly { id: string }[] | undefined,
+): MaterialThumbnailDto[] {
+  return (thumbnails ?? []).map((thumbnail) => ({
+    id: thumbnail.id,
+    url: `${THUMBNAIL_PUBLIC_PATH}/${thumbnail.id}`,
+  }));
+}
+
+function thumbnailFieldError(reason: string): ValidationError {
+  return new ValidationError(
+    'The request contains one or more invalid fields.',
+    [{ field: THUMBNAILS_FIELD, reason }],
+  );
+}
+
+/**
+ * Validate thumbnail uploads: every file must be a JPEG/PNG/WebP image of at
+ * most `MAX_THUMBNAIL_SIZE_BYTES`, and the material may hold at most
+ * `MAX_THUMBNAILS_PER_MATERIAL` thumbnails including the `existingCount` it
+ * already has. Returns each file paired with its detected content type. Runs
+ * before any storage so a rejected upload stores nothing. Pure aside from the
+ * throw.
+ */
+export function validateThumbnailsOrThrow(
+  files: readonly UploadedFile[],
+  existingCount: number,
+): { file: UploadedFile; contentType: string }[] {
+  if (existingCount + files.length > MAX_THUMBNAILS_PER_MATERIAL) {
+    throw thumbnailFieldError(
+      `a Study Material may have at most ${MAX_THUMBNAILS_PER_MATERIAL} thumbnails.`,
+    );
+  }
+  return files.map((file) => {
+    if (file.sizeBytes > MAX_THUMBNAIL_SIZE_BYTES) {
+      throw thumbnailFieldError(
+        `each thumbnail must be ${MAX_THUMBNAIL_SIZE_BYTES / (1024 * 1024)} MB or smaller.`,
+      );
+    }
+    const contentType = detectThumbnailContentType(file.body);
+    if (contentType === null) {
+      throw thumbnailFieldError('each thumbnail must be a JPEG, PNG, or WebP image.');
+    }
+    return { file, contentType };
+  });
+}
+
+/**
  * Group a material's resolved Tag assignments into the `tagsByCategoryType`
  * map keyed by Category Type id (Req 2.5, 5.1). A Category Type that the
  * material carries no Tags under simply does not appear as a key here; the
@@ -289,6 +370,7 @@ export function toMaterialDto(record: MaterialRecord): MaterialDto {
       contentType: file.contentType,
       fileSizeBytes: file.fileSizeBytes,
     })),
+    thumbnails: toThumbnailDtos(record.thumbnails),
     priceAmount,
     currency: record.currency ?? DEFAULT_CURRENCY,
     isPaid: isPaidMaterial(priceAmount),
@@ -311,6 +393,29 @@ export function createMaterialService(
   const generateObjectKey =
     deps.generateObjectKey ??
     (() => `${MATERIAL_OBJECT_KEY_PREFIX}${randomUUID()}`);
+  const generateThumbnailKey =
+    deps.generateThumbnailKey ??
+    (() => `${THUMBNAIL_OBJECT_KEY_PREFIX}${randomUUID()}`);
+
+  /**
+   * Store validated thumbnail bytes under fresh keys and record them on the
+   * material, preserving upload order.
+   */
+  async function storeThumbnails(
+    id: string,
+    validated: { file: UploadedFile; contentType: string }[],
+  ): Promise<void> {
+    if (validated.length === 0) {
+      return;
+    }
+    const stored: { objectKey: string; contentType: string; fileSizeBytes: number }[] = [];
+    for (const { file, contentType } of validated) {
+      const objectKey = generateThumbnailKey();
+      await storage.putObject(objectKey, file.body, contentType);
+      stored.push({ objectKey, contentType, fileSizeBytes: file.sizeBytes });
+    }
+    await materials.addThumbnails(id, stored);
+  }
 
   /**
    * Store each uploaded file's bytes in Object Storage under a fresh Object
@@ -362,6 +467,7 @@ export function createMaterialService(
     // rejected Price stores nothing in R2 or the database (Req 11.13–11.15).
     const price = validatePrice(input.priceAmount, input.currency);
     const files = validateFilesOrThrow(input.files);
+    const thumbnails = validateThumbnailsOrThrow(input.thumbnails ?? [], 0);
 
     // Store every file under its own generated Object Storage Key, then persist
     // the material with the FIRST file as the primary columns and record ALL
@@ -380,6 +486,7 @@ export function createMaterialService(
       currency: price.currency,
     });
     await materials.addFiles(record.id, stored);
+    await storeThumbnails(record.id, thumbnails);
 
     // Re-fetch so the returned DTO reflects the persisted files.
     const created = await materials.findById(record.id);
@@ -439,6 +546,9 @@ export function createMaterialService(
     for (const file of current.files ?? []) {
       objectKeys.add(file.objectKey);
     }
+    for (const thumbnail of current.thumbnails ?? []) {
+      objectKeys.add(thumbnail.objectKey);
+    }
     for (const objectKey of objectKeys) {
       await storage.deleteObject(objectKey);
     }
@@ -465,6 +575,51 @@ export function createMaterialService(
 
     const updated = await materials.findById(id);
     return toMaterialDto(updated ?? current);
+  }
+
+  async function addThumbnails(
+    id: string,
+    files: UploadedFile[],
+  ): Promise<MaterialDto> {
+    const current = await materials.findById(id);
+    if (current === null) {
+      throw new NotFoundError('The requested Study Material was not found.');
+    }
+    if (files.length === 0) {
+      throw thumbnailFieldError('at least one thumbnail is required.');
+    }
+    const validated = validateThumbnailsOrThrow(
+      files,
+      current.thumbnails?.length ?? 0,
+    );
+    await storeThumbnails(id, validated);
+    const updated = await materials.findById(id);
+    return toMaterialDto(updated ?? current);
+  }
+
+  async function removeThumbnail(
+    id: string,
+    thumbnailId: string,
+  ): Promise<MaterialDto> {
+    const current = await materials.findById(id);
+    if (current === null) {
+      throw new NotFoundError('The requested Study Material was not found.');
+    }
+    const deleted = await materials.deleteThumbnail(id, thumbnailId);
+    if (deleted === null) {
+      throw new NotFoundError('The requested thumbnail was not found.');
+    }
+    await storage.deleteObject(deleted.objectKey);
+    const updated = await materials.findById(id);
+    return toMaterialDto(updated ?? current);
+  }
+
+  async function listThumbnails(id: string): Promise<MaterialThumbnailDto[]> {
+    const record = await materials.findById(id);
+    if (record === null) {
+      throw new NotFoundError('The requested Study Material was not found.');
+    }
+    return toThumbnailDtos(record.thumbnails);
   }
 
   function promotePrimaryFile(
@@ -687,6 +842,9 @@ export function createMaterialService(
     deleteMaterial,
     addFiles,
     removeFile,
+    addThumbnails,
+    removeThumbnail,
+    listThumbnails,
     getMaterial,
     getUnlockOptions,
   };
@@ -717,6 +875,14 @@ function toMaterialRecord(record: MaterialWithTags): MaterialRecord {
       contentType: file.contentType,
       fileSizeBytes: file.fileSizeBytes,
     })),
+    thumbnails: record.thumbnails.map(
+      (thumbnail): MaterialThumbnailRecord => ({
+        id: thumbnail.id,
+        objectKey: thumbnail.objectKey,
+        contentType: thumbnail.contentType,
+        fileSizeBytes: thumbnail.fileSizeBytes,
+      }),
+    ),
     priceAmount: record.priceAmount,
     currency: record.currency,
     ratingCount: record.ratingCount,
@@ -776,6 +942,21 @@ export function createDefaultMaterialService(): MaterialService {
       },
       async countFiles(studyMaterialId) {
         return materialRepository.countMaterialFiles(studyMaterialId);
+      },
+      async addThumbnails(studyMaterialId, thumbnails) {
+        await materialRepository.addMaterialThumbnails(studyMaterialId, thumbnails);
+      },
+      async deleteThumbnail(studyMaterialId, thumbnailId) {
+        const thumbnail = await materialRepository.findMaterialThumbnail(
+          thumbnailId,
+          studyMaterialId,
+        );
+        if (thumbnail === null) {
+          return null;
+        }
+        const deleted =
+          await materialRepository.deleteMaterialThumbnail(thumbnailId);
+        return deleted === null ? null : { objectKey: deleted.objectKey };
       },
     },
     storage: { putObject, deleteObject },

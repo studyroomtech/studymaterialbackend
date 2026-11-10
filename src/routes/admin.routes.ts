@@ -48,6 +48,8 @@ import {
   deleteCategoryHandler,
   deleteCategoryTypeHandler,
   addMaterialFilesHandler,
+  addMaterialThumbnailsHandler,
+  removeMaterialThumbnailHandler,
   deleteMaterialHandler,
   editMaterialHandler,
   removeMaterialFileHandler,
@@ -75,7 +77,11 @@ import {
 } from '../constants/limits.constant';
 import { authMiddleware } from '../middleware/auth.middleware';
 import { requireAdmin } from '../middleware/requireAdmin.middleware';
-import { uploadMaterialFiles } from '../middleware/upload.middleware';
+import {
+  uploadMaterialFiles,
+  uploadMaterialFilesWithThumbnails,
+  uploadThumbnailFiles,
+} from '../middleware/upload.middleware';
 import { validate } from '../middleware/validate.middleware';
 
 // --- Zod validation schemas ------------------------------------------------
@@ -100,6 +106,12 @@ const reviewIdParamsSchema = z.object({
 const materialFileParamsSchema = z.object({
   id: z.string().min(1),
   fileId: z.string().min(1),
+});
+
+// `DELETE /api/admin/materials/:id/thumbnails/:thumbnailId` params.
+const materialThumbnailParamsSchema = z.object({
+  id: z.string().min(1),
+  thumbnailId: z.string().min(1),
 });
 
 // Optional multipart Price amount: on the multipart upload every field arrives
@@ -229,7 +241,7 @@ export function createAdminRouter(): Router {
   router.post(
     '/materials',
     requireAdmin,
-    uploadMaterialFiles,
+    uploadMaterialFilesWithThumbnails,
     validate({ body: materialUploadBodySchema }),
     uploadMaterialHandler,
   );
@@ -248,6 +260,22 @@ export function createAdminRouter(): Router {
     requireAdmin,
     validate({ params: materialFileParamsSchema }),
     removeMaterialFileHandler,
+  );
+
+  // Append/remove thumbnail images on an existing Study Material.
+  router.post(
+    '/materials/:id/thumbnails',
+    requireAdmin,
+    uploadThumbnailFiles,
+    validate({ params: idParamsSchema }),
+    addMaterialThumbnailsHandler,
+  );
+
+  router.delete(
+    '/materials/:id/thumbnails/:thumbnailId',
+    requireAdmin,
+    validate({ params: materialThumbnailParamsSchema }),
+    removeMaterialThumbnailHandler,
   );
 
   router.patch(

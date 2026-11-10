@@ -5,6 +5,7 @@ import type {
   CategoryType,
   MaterialFile,
   MaterialTag,
+  MaterialThumbnail,
   StudyMaterial,
   Tag,
 } from '@prisma/client';
@@ -65,7 +66,14 @@ export type MaterialTagWithTag = MaterialTag & {
 export type MaterialWithTags = StudyMaterial & {
   materialTags: MaterialTagWithTag[];
   files: MaterialFile[];
+  thumbnails: MaterialThumbnail[];
 };
+/** The metadata persisted for one thumbnail image added to a Study Material. */
+export interface MaterialThumbnailInput {
+  objectKey: string;
+  contentType: string;
+  fileSizeBytes: number;
+}
 
 /**
  * The metadata for a single file (PDF) added to a Study Material. The file

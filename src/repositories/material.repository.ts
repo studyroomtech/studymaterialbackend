@@ -7,12 +7,17 @@
 // group them by Category Type for the catalog (Req 2.5).
 
 import { Prisma } from '@prisma/client';
-import type { MaterialFile, StudyMaterial } from '@prisma/client';
+import type {
+  MaterialFile,
+  MaterialThumbnail,
+  StudyMaterial,
+} from '@prisma/client';
 
 import { getPrismaClient } from './prismaClient';
 import type {
   CreateMaterialInput,
   MaterialFileInput,
+  MaterialThumbnailInput,
   MaterialWithTags,
   UpdateMaterialInput,
 } from './material.repository.types';
@@ -23,6 +28,7 @@ import type {
 const TAG_INCLUDE = {
   materialTags: { include: { tag: { include: { categoryType: true } } } },
   files: { orderBy: [{ orderIndex: 'asc' }, { createdAt: 'asc' }] },
+  thumbnails: { orderBy: [{ orderIndex: 'asc' }, { createdAt: 'asc' }] },
 } satisfies Prisma.StudyMaterialInclude;
 
 /**
@@ -177,4 +183,61 @@ export async function deleteMaterialFile(
 /** Count the files currently attached to a Study Material. */
 export function countMaterialFiles(studyMaterialId: string): Promise<number> {
   return getPrismaClient().materialFile.count({ where: { studyMaterialId } });
+}
+/**
+ * Append thumbnails to a Study Material after its current last one, so upload
+ * order is preserved (the first thumbnail is the card cover).
+ */
+export async function addMaterialThumbnails(
+  studyMaterialId: string,
+  thumbnails: MaterialThumbnailInput[],
+): Promise<void> {
+  if (thumbnails.length === 0) {
+    return;
+  }
+  const prisma = getPrismaClient();
+  const last = await prisma.materialThumbnail.aggregate({
+    where: { studyMaterialId },
+    _max: { orderIndex: true },
+  });
+  const start = (last._max.orderIndex ?? -1) + 1;
+  await prisma.materialThumbnail.createMany({
+    data: thumbnails.map((thumbnail, index) => ({
+      studyMaterialId,
+      objectKey: thumbnail.objectKey,
+      contentType: thumbnail.contentType,
+      fileSizeBytes: thumbnail.fileSizeBytes,
+      orderIndex: start + index,
+    })),
+  });
+}
+/**
+ * Find a thumbnail by id. When `studyMaterialId` is given the lookup is scoped
+ * to that material so a thumbnail id from another material cannot be resolved.
+ */
+export function findMaterialThumbnail(
+  thumbnailId: string,
+  studyMaterialId?: string,
+): Promise<MaterialThumbnail | null> {
+  return getPrismaClient().materialThumbnail.findFirst({
+    where: {
+      id: thumbnailId,
+      ...(studyMaterialId !== undefined ? { studyMaterialId } : {}),
+    },
+  });
+}
+/**
+ * Delete a thumbnail row by id and return it so the caller can delete its
+ * stored object. Returns `null` when the row does not exist (idempotent).
+ */
+export async function deleteMaterialThumbnail(
+  thumbnailId: string,
+): Promise<MaterialThumbnail | null> {
+  try {
+    return await getPrismaClient().materialThumbnail.delete({
+      where: { id: thumbnailId },
+    });
+  } catch {
+    return null;
+  }
 }

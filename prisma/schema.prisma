@@ -86,6 +86,9 @@ model StudyMaterial {
   // objectKey/fileName/contentType/fileSizeBytes mirror the first (primary)
   // file for backward compatibility; `files` is the authoritative list.
   files         MaterialFile[]
+  // Preview images shown on cards and on the locked preview page, in upload
+  // order. Publicly viewable; an empty list falls back to the generated cover.
+  thumbnails    MaterialThumbnail[]
 
   @@index([title])
   @@index([linkGroupId])
@@ -100,6 +103,21 @@ model MaterialFile {
   studyMaterial   StudyMaterial @relation(fields: [studyMaterialId], references: [id], onDelete: Cascade)
   objectKey       String
   fileName        String
+  contentType     String
+  fileSizeBytes   Int
+  orderIndex      Int           @default(0)
+  createdAt       DateTime      @default(now())
+
+  @@index([studyMaterialId])
+}
+
+// A preview image (JPEG/PNG/WebP) belonging to a Study Material. Served
+// publicly by id via `GET /api/thumbnails/:id`; bytes live in Object Storage.
+model MaterialThumbnail {
+  id              String        @id @default(cuid())
+  studyMaterialId String
+  studyMaterial   StudyMaterial @relation(fields: [studyMaterialId], references: [id], onDelete: Cascade)
+  objectKey       String
   contentType     String
   fileSizeBytes   Int
   orderIndex      Int           @default(0)

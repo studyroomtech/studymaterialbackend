@@ -14,6 +14,8 @@
 import { getEnv } from '../config/env';
 import * as localStorage from './localStorage';
 import * as r2Storage from './r2Storage';
+import type { Readable } from 'node:stream';
+
 import type { StorageObjectBody } from './storage.types';
 
 /** Whether local filesystem storage is active (`NODE_ENV=local`). */
@@ -69,4 +71,16 @@ export async function getPresignedPreviewUrl(
   return useLocalStorage()
     ? localStorage.getPresignedPreviewUrl(objectKey, fileName, contentType)
     : r2Storage.getPresignedPreviewUrl(objectKey, fileName, contentType);
+}
+
+/**
+ * Open a read stream for the object under `objectKey` from the local
+ * filesystem or R2, or `null` when no such object exists.
+ */
+export async function openObjectStream(
+  objectKey: string,
+): Promise<Readable | null> {
+  return useLocalStorage()
+    ? localStorage.openObjectStream(objectKey)
+    : r2Storage.openObjectStream(objectKey);
 }

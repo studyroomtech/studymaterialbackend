@@ -30,7 +30,22 @@ import type {
   MaterialEditRequest,
   MaterialResponse,
 } from '../types/api.types';
-import type { RequestWithFile } from './admin.controller.types';
+import type { UploadedFile } from '../services/material.service.types';
+import type {
+  RequestWithFile,
+  RequestWithFileFields,
+  UploadedRequestFile,
+} from './admin.controller.types';
+
+/** Map a multer file to the service's upload shape. */
+function toUploadedFile(file: UploadedRequestFile): UploadedFile {
+  return {
+    body: file.buffer,
+    fileName: file.originalname,
+    contentType: file.mimetype,
+    sizeBytes: file.size,
+  };
+}
 
 /**
  * `POST /api/admin/login` — placeholder (Req 10.5). Admin credential
@@ -82,18 +97,14 @@ export async function uploadMaterialHandler(
       jobs?: string[];
       linkedMaterialIds?: string[];
     };
-    const uploaded = (req as Request & RequestWithFile).files ?? [];
+    const uploaded = (req as Request & RequestWithFileFields).files ?? {};
     const material = await createDefaultMaterialService().uploadMaterial({
       title,
       description,
       priceAmount,
       currency,
-      files: uploaded.map((file) => ({
-        body: file.buffer,
-        fileName: file.originalname,
-        contentType: file.mimetype,
-        sizeBytes: file.size,
-      })),
+      files: (uploaded.files ?? []).map(toUploadedFile),
+      thumbnails: (uploaded.thumbnails ?? []).map(toUploadedFile),
     });
     // Attach the selected/typed classifications (by name) to the new material.
     // An existing value is reused; a new name is auto-created under the relevant
@@ -195,12 +206,7 @@ export async function addMaterialFilesHandler(
     const uploaded = (req as Request & RequestWithFile).files ?? [];
     const material = await createDefaultMaterialService().addFiles(
       req.params.id,
-      uploaded.map((file) => ({
-        body: file.buffer,
-        fileName: file.originalname,
-        contentType: file.mimetype,
-        sizeBytes: file.size,
-      })),
+      uploaded.map(toUploadedFile),
     );
     const body: MaterialResponse = { material };
     res.status(200).json(body);
@@ -223,6 +229,50 @@ export async function removeMaterialFileHandler(
     const material = await createDefaultMaterialService().removeFile(
       req.params.id,
       req.params.fileId,
+    );
+    const body: MaterialResponse = { material };
+    res.status(200).json(body);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * `POST /api/admin/materials/:id/thumbnails` — append thumbnail images
+ * (multipart field `thumbnails`). Images are format-, size-, and
+ * count-validated by the service; a missing material yields a not-found error.
+ */
+export async function addMaterialThumbnailsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const uploaded = (req as Request & RequestWithFile).files ?? [];
+    const material = await createDefaultMaterialService().addThumbnails(
+      req.params.id,
+      uploaded.map(toUploadedFile),
+    );
+    const body: MaterialResponse = { material };
+    res.status(200).json(body);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * `DELETE /api/admin/materials/:id/thumbnails/:thumbnailId` — remove one
+ * thumbnail and its stored image. Not-found when either id does not resolve.
+ */
+export async function removeMaterialThumbnailHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const material = await createDefaultMaterialService().removeThumbnail(
+      req.params.id,
+      req.params.thumbnailId,
     );
     const body: MaterialResponse = { material };
     res.status(200).json(body);

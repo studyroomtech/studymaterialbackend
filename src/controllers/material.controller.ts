@@ -127,3 +127,24 @@ export async function getUnlockOptionsHandler(
     next(error);
   }
 }
+
+/**
+ * `GET /api/materials/:id/thumbnails` — list a material's thumbnail images
+ * (`{ thumbnails: [{ id, url }] }`). Public and not entitlement-gated, so a
+ * locked material can still show its preview images. Not-found when the
+ * material does not exist.
+ */
+export async function getMaterialThumbnailsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const thumbnails = await createDefaultMaterialService().listThumbnails(
+      req.params.id,
+    );
+    res.status(200).json({ thumbnails });
+  } catch (error) {
+    next(error);
+  }
+}

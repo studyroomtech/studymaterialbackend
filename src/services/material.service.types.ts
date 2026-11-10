@@ -16,7 +16,10 @@
 // entitlement gate are deferred to Phase 2; in Phase 1 every material is served
 // as Free content.
 
-import type { MaterialDto } from '../types/domain.types';
+import type {
+  MaterialDto,
+  MaterialThumbnailDto,
+} from '../types/domain.types';
 import type { StorageObjectBody } from '../storage/storage.types';
 import type { EntitlementRef } from './entitlement.service.types';
 
@@ -56,6 +59,11 @@ export interface MaterialRecord {
    * never exposed in the public DTO (Req 1.13).
    */
   files: MaterialFileRecord[];
+  /**
+   * The material's thumbnail images in upload order. Optional so callers that
+   * do not load thumbnails can omit it (treated as none).
+   */
+  thumbnails?: MaterialThumbnailRecord[];
   /**
    * The Paid Material's Price amount, or `null`/absent for a Free Material. A
    * strictly-positive amount marks the material as Paid, which the entitlement
@@ -107,6 +115,16 @@ export interface MaterialFileRecord {
 }
 
 /**
+ * A persisted thumbnail image of a Study Material. The Object Storage Key is
+ * kept server-side; the public DTO exposes only the id and serving path.
+ */
+export interface MaterialThumbnailRecord {
+  id: string;
+  objectKey: string;
+  contentType: string;
+  fileSizeBytes: number;
+}
+/**
  * The input to a Study Material upload: the title (1–200 chars), an optional
  * description (0–2000 chars), and the file to store (Req 11.1, 11.2).
  *
@@ -127,6 +145,8 @@ export interface UploadMaterialInput {
    * recorded in the authoritative `MaterialFile` list.
    */
   files: UploadedFile[];
+  /** Optional thumbnail images (JPEG/PNG/WebP), validated by the service. */
+  thumbnails?: UploadedFile[];
   priceAmount?: number | null;
   currency?: string | null;
 }
@@ -232,6 +252,19 @@ export interface MaterialRepository {
 
   /** Count the files currently attached to a Study Material. */
   countFiles(studyMaterialId: string): Promise<number>;
+  /** Append thumbnails to a Study Material after its current last one. */
+  addThumbnails(
+    studyMaterialId: string,
+    thumbnails: { objectKey: string; contentType: string; fileSizeBytes: number }[],
+  ): Promise<void>;
+  /**
+   * Delete a thumbnail row scoped to its material and return its Object
+   * Storage Key, or `null` when no such thumbnail exists under the material.
+   */
+  deleteThumbnail(
+    studyMaterialId: string,
+    thumbnailId: string,
+  ): Promise<{ objectKey: string } | null>;
 }
 
 /**
@@ -314,6 +347,8 @@ export interface MaterialServiceDeps {
    */
   linkGroups: MaterialLinkGroupRepository;
   generateObjectKey?: () => string;
+  /** Mints the Object Storage Key for a new thumbnail (injectable for tests). */
+  generateThumbnailKey?: () => string;
 }
 
 /**
@@ -339,6 +374,18 @@ export interface MaterialService {
    * not-found error. Returns the updated material DTO with its remaining files.
    */
   removeFile(id: string, fileId: string): Promise<MaterialDto>;
+  /**
+   * Append thumbnail images (JPEG/PNG/WebP, size- and count-limited) to an
+   * existing Study Material. A missing material yields a not-found error.
+   */
+  addThumbnails(id: string, files: UploadedFile[]): Promise<MaterialDto>;
+  /** Remove one thumbnail and its stored object; not-found when absent. */
+  removeThumbnail(id: string, thumbnailId: string): Promise<MaterialDto>;
+  /**
+   * List a material's thumbnails without the entitlement gate (thumbnails are
+   * public preview images). A missing material yields a not-found error.
+   */
+  listThumbnails(id: string): Promise<MaterialThumbnailDto[]>;
   /**
    * Return the complete metadata for an existing Study Material (Req 5.1, 5.3).
    * When the material is a Paid Material (`priceAmount > 0`), the resolved

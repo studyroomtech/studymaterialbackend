@@ -19,6 +19,7 @@ import { ROLE_ADMIN } from '../constants/roles.constant';
 import { countDownloadersByMaterial } from '../repositories/download.repository';
 import { listMaterials } from '../repositories/material.repository';
 import { buildCatalog } from '../services/catalog.service';
+import { toThumbnailDtos } from '../services/material.service';
 import type {
   CatalogInput,
   CatalogMaterialInput,
@@ -64,6 +65,7 @@ function toCatalogMaterialInput(
       categoryId: materialTag.tagId,
     })),
     linkGroupId: material.linkGroupId,
+    thumbnails: toThumbnailDtos(material.thumbnails),
     averageRating:
       material.ratingCount > 0
         ? material.ratingSum / material.ratingCount

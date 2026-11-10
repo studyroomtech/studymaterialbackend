@@ -9,7 +9,10 @@
 // which every material carries an entry for every supported Category Type
 // (empty array when the material has no Tags under that type).
 
-import type { CategoryTypeDto } from '../types/domain.types';
+import type {
+  CategoryTypeDto,
+  MaterialThumbnailDto,
+} from '../types/domain.types';
 
 /**
  * A single Tag assignment on a Study Material, referencing the Category it was
@@ -36,6 +39,8 @@ export interface CatalogMaterialInput {
   fileName?: string;
   contentType?: string;
   fileSizeBytes?: number;
+  /** The material's thumbnail images in upload order. */
+  thumbnails?: MaterialThumbnailDto[];
   priceAmount?: number | null;
   currency?: string;
   isPaid?: boolean;

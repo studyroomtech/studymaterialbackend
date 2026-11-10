@@ -31,3 +31,14 @@ export interface RequestWithFile {
   file?: UploadedRequestFile;
   files?: UploadedRequestFile[];
 }
+
+/**
+ * An Express request parsed by `multer.fields` (material create): uploaded
+ * parts grouped by field name — PDFs under `files`, images under `thumbnails`.
+ */
+export interface RequestWithFileFields {
+  files?: {
+    files?: UploadedRequestFile[];
+    thumbnails?: UploadedRequestFile[];
+  };
+}

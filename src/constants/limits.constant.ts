@@ -40,6 +40,9 @@ export const MAX_MATERIAL_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 export const MAX_MATERIAL_FILES_PER_REQUEST = 10;
 
 export const MIN_MATERIAL_FILES = 1;
+// --- Study Material thumbnails (JPEG/PNG/WebP preview images) ---
+export const MAX_THUMBNAIL_SIZE_BYTES = 5 * 1024 * 1024;
+export const MAX_THUMBNAILS_PER_MATERIAL = 6;
 
 // --- Category Type / Category names ---
 export const CATEGORY_TYPE_NAME_MIN_LENGTH = 1;

@@ -45,6 +45,7 @@ import materialsRouter from './routes/materials.routes';
 import paymentsRouter from './routes/payments.routes';
 import reviewsRouter from './routes/reviews.routes';
 import testSeriesRouter from './routes/testSeries.routes';
+import thumbnailsRouter from './routes/thumbnails.routes';
 
 // The Razorpay webhook path whose raw body must reach `express.raw` unparsed.
 const WEBHOOK_PATH = '/api/payments/webhook';
@@ -100,6 +101,10 @@ export function createApp(): Express {
   // (RATE_LIMIT_MAX_REQUESTS / RATE_LIMIT_WINDOW_MS). Over-budget requests are
   // rejected with 429 TOO_MANY_REQUESTS before any router runs. Mounted on
   // `/api` so the `/health` liveness probe stays unthrottled.
+  // Public thumbnail images (`GET /api/thumbnails/:id`) are served before the
+  // limiter: one page can show dozens of them and each is cached permanently.
+  app.use('/api', thumbnailsRouter);
+
   app.use('/api', rateLimit);
 
   // Public API surface (each router resolves the caller's Role via its own
