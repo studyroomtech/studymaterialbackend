@@ -99,7 +99,7 @@ export interface MaterialDto {
   /**
    * The number of unique Learners who downloaded the material (0 when none),
    * derived from Download Records. Repeat and per-file downloads by the same
-   * Learner count once.
+   * Learner count once. Admin-only: absent for every non-admin caller.
    */
   downloadCount?: number;
 }

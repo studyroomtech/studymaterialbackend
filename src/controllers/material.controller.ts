@@ -45,7 +45,7 @@ export async function searchMaterialsHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { materials } = await loadCatalog();
+    const { materials } = await loadCatalog(req.auth.role === ROLE_ADMIN);
     const matched = searchMaterials(materials, {
       query: readQueryParam(req.query.q),
       categoryId: readQueryParam(req.query.categoryId),
@@ -83,16 +83,20 @@ export async function getMaterialHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
+    const isAdmin = req.auth.role === ROLE_ADMIN;
     const material = await createDefaultMaterialService().getMaterial(
       req.params.id,
       req.auth.userId,
-      req.auth.role === ROLE_ADMIN,
+      isAdmin,
     );
-    // Counted only after the access gate passed, so a denied caller costs no
-    // extra query.
-    const downloadCounts = await countDownloadersByMaterial([material.id]);
     // Return the material unwrapped (fields at top level) as documented for
-    // this endpoint, so the Frontend Project consumes it directly.
+    // this endpoint, so the Frontend Project consumes it directly. The download
+    // count is admin-only and never sent to other callers.
+    if (!isAdmin) {
+      res.status(200).json(material);
+      return;
+    }
+    const downloadCounts = await countDownloadersByMaterial([material.id]);
     res
       .status(200)
       .json({ ...material, downloadCount: downloadCounts.get(material.id) ?? 0 });

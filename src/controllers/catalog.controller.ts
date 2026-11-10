@@ -15,6 +15,7 @@
 import type { NextFunction, Request, Response } from 'express';
 
 import { listCategoryTypesWithCategories } from '../repositories/categoryType.repository';
+import { ROLE_ADMIN } from '../constants/roles.constant';
 import { countDownloadersByMaterial } from '../repositories/download.repository';
 import { listMaterials } from '../repositories/material.repository';
 import { buildCatalog } from '../services/catalog.service';
@@ -53,7 +54,7 @@ function toCategoryTypeDto(
  */
 function toCatalogMaterialInput(
   material: MaterialWithTags,
-  downloadCounts: ReadonlyMap<string, number>,
+  downloadCounts: ReadonlyMap<string, number> | null,
 ): CatalogMaterialInput {
   return {
     id: material.id,
@@ -68,7 +69,9 @@ function toCatalogMaterialInput(
         ? material.ratingSum / material.ratingCount
         : null,
     reviewCount: material.ratingCount,
-    downloadCount: downloadCounts.get(material.id) ?? 0,
+    // Omitted (undefined) for non-admins so the field never leaves the server.
+    downloadCount:
+      downloadCounts === null ? undefined : downloadCounts.get(material.id) ?? 0,
   };
 }
 
@@ -77,12 +80,15 @@ function toCatalogMaterialInput(
  * and assemble the Material Catalog DTO via the pure `buildCatalog` service.
  * Shared by `getCatalog` and the search controller so both operate on an
  * identical catalog shape (Req 2.5, 3.1).
+ *
+ * Download counts are admin-only: they are queried and included only when
+ * `isAdmin` is true.
  */
-export async function loadCatalog(): Promise<CatalogResponse> {
+export async function loadCatalog(isAdmin: boolean): Promise<CatalogResponse> {
   const [categoryTypes, materials, downloadCounts] = await Promise.all([
     listCategoryTypesWithCategories(),
     listMaterials(),
-    countDownloadersByMaterial(),
+    isAdmin ? countDownloadersByMaterial() : Promise.resolve(null),
   ]);
 
   const input: CatalogInput = {
@@ -100,12 +106,12 @@ export async function loadCatalog(): Promise<CatalogResponse> {
  * 2.5). Any failure is forwarded to the central error handler.
  */
 export async function getCatalog(
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
-    const catalog = await loadCatalog();
+    const catalog = await loadCatalog(req.auth.role === ROLE_ADMIN);
     res.status(200).json(catalog);
   } catch (error) {
     next(error);
