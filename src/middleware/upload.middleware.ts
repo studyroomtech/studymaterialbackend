@@ -70,7 +70,7 @@ function withValidationErrors(parse: RequestHandler): RequestHandler {
 }
 
 /** Parses `files` (PDFs) into `req.files` as an array. */
-export const uploadMaterialFiles = withValidationErrors(
+export const uploadMaterialFiles: RequestHandler = withValidationErrors(
   upload.array(MATERIAL_FILES_FIELD, MAX_MATERIAL_FILES_PER_REQUEST),
 );
 
@@ -78,7 +78,7 @@ export const uploadMaterialFiles = withValidationErrors(
  * Parses `files` and `thumbnails` into `req.files` as
  * `{ files?: File[]; thumbnails?: File[] }` (material create).
  */
-export const uploadMaterialFilesWithThumbnails = withValidationErrors(
+export const uploadMaterialFilesWithThumbnails: RequestHandler = withValidationErrors(
   uploadWithThumbnails.fields([
     { name: MATERIAL_FILES_FIELD, maxCount: MAX_MATERIAL_FILES_PER_REQUEST },
     { name: THUMBNAIL_FILES_FIELD, maxCount: MAX_THUMBNAILS_PER_MATERIAL },
@@ -86,6 +86,6 @@ export const uploadMaterialFilesWithThumbnails = withValidationErrors(
 );
 
 /** Parses `thumbnails` into `req.files` as an array (add thumbnails). */
-export const uploadThumbnailFiles = withValidationErrors(
+export const uploadThumbnailFiles: RequestHandler = withValidationErrors(
   uploadThumbnails.array(THUMBNAIL_FILES_FIELD, MAX_THUMBNAILS_PER_MATERIAL),
 );
