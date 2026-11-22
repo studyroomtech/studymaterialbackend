@@ -20,7 +20,6 @@
 import type { NextFunction, Request, Response } from 'express';
 
 import { createDefaultCategoryService } from '../services/category.service';
-import { createDefaultLinkGroupService } from '../services/linkGroup.service';
 import { createDefaultMaterialService } from '../services/material.service';
 import {
   JOB_CATEGORY_TYPE_NAME,
@@ -86,7 +85,6 @@ export async function uploadMaterialHandler(
       categories,
       subjects,
       jobs,
-      linkedMaterialIds,
     } = req.body as {
       title: string;
       description?: string;
@@ -95,7 +93,6 @@ export async function uploadMaterialHandler(
       categories?: string[];
       subjects?: string[];
       jobs?: string[];
-      linkedMaterialIds?: string[];
     };
     const uploaded = (req as Request & RequestWithFileFields).files ?? {};
     const material = await createDefaultMaterialService().uploadMaterial({
@@ -127,18 +124,6 @@ export async function uploadMaterialHandler(
         JOB_CATEGORY_TYPE_NAME,
         jobs,
       );
-    }
-    // Optionally link the newly created material into a Link Group with the
-    // supplied existing materials (Req 1.1–1.6). When no ids are supplied the
-    // material is created with no Link Group membership (Req 1.4). Count,
-    // distinctness, and existence are validated by the Link_Manager service,
-    // which surfaces VALIDATION_ERROR / NOT_FOUND to the error handler
-    // (Req 1.5, 1.6).
-    if (Array.isArray(linkedMaterialIds) && linkedMaterialIds.length > 0) {
-      await createDefaultLinkGroupService().linkMaterials({
-        subjectId: material.id,
-        referencedIds: linkedMaterialIds,
-      });
     }
     const body: MaterialResponse = { material };
     res.status(201).json(body);

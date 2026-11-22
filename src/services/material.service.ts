@@ -59,12 +59,10 @@ import {
 } from '../utils/errors';
 import * as materialRepository from '../repositories/material.repository';
 import * as entitlementRepository from '../repositories/entitlement.repository';
-import * as linkGroupRepository from '../repositories/linkGroup.repository';
 import { deleteObject, putObject } from '../storage/storage.service';
 import { DEFAULT_CURRENCY } from '../constants/payment.constant';
-import { logError } from '../utils/logger';
 import { classifyPrice, validatePrice } from './price.service';
-import { isEffectivelyEntitled, isEntitled } from './entitlement.service';
+import { isEntitled } from './entitlement.service';
 import type { ApiErrorFieldDto } from '../types/api.types';
 import type {
   MaterialDto,
@@ -86,7 +84,6 @@ import type {
   MaterialService,
   MaterialServiceDeps,
   MaterialThumbnailRecord,
-  UnlockOptionDto,
   UpdateMaterialRecordInput,
   UploadedFile,
   UploadMaterialInput,
@@ -389,7 +386,7 @@ export function toMaterialDto(record: MaterialRecord): MaterialDto {
 export function createMaterialService(
   deps: MaterialServiceDeps,
 ): MaterialService {
-  const { materials, storage, entitlements, linkGroups } = deps;
+  const { materials, storage, entitlements } = deps;
   const generateObjectKey =
     deps.generateObjectKey ??
     (() => `${MATERIAL_OBJECT_KEY_PREFIX}${randomUUID()}`);
@@ -673,81 +670,24 @@ export function createMaterialService(
   }
 
   /**
-   * Require that a resolved learner may view a material before its content is
-   * served. A material is gated whenever it belongs to a Link Group containing
-   * at least one Paid Material — so a Free Material linked to a Paid one is
-   * locked behind a Direct Entitlement to some group member (Req 4.1–4.3, 5.1).
-   *
-   *   1. Truly-free pass-through — the material is a Free Material AND no member
-   *      of its Link Group is a Paid Material: view is allowed for anyone,
-   *      unchanged from prior behavior (Req 8.1).
-   *   2. Otherwise the group is paid-gated: a resolved Learner must hold a
-   *      Direct Entitlement for the material (fast path, Req 4.1) or for any
-   *      member of its Link Group (Effective Entitlement, Req 4.2, 10.1);
-   *      otherwise `PaymentRequiredError` (403) is thrown (Req 4.3).
-   *
-   * The decision reads only existing Direct Entitlement records and the current
-   * Link Group membership, creating/modifying/deleting nothing (Req 5.1).
-   * Fail-safe (Req 5.5): if the Link Group membership cannot be resolved, the
-   * gate falls back to the material's own Price — a Free Material is served, a
-   * Paid Material requires a Direct Entitlement.
+   * Require that a resolved learner holds a Payment Entitlement for a Paid
+   * Material before its content may be served (Req 12.2, 12.3). When no learner
+   * is resolved, or the learner holds no Entitlement for the `(userId,
+   * materialId)` pair, a `PaymentRequiredError` (403) is thrown and no content
+   * is returned. The single Entitlement lookup is fed through the pure
+   * `isEntitled` membership check so the gate's decision rule stays isolated
+   * and property-testable.
    */
-  async function requireAccess(
+  async function requireEntitlement(
     userId: string | null | undefined,
-    material: { id: string; priceAmount?: number | null },
+    materialId: string,
   ): Promise<void> {
-    // Resolve the Link Group closure with member Prices to decide gating. On
-    // failure, fall back to the material's own Price only (Req 5.5).
-    let members: { id: string; priceAmount?: number | null }[];
-    try {
-      members = await linkGroups.listGroupMembersWithPrice(material.id);
-    } catch (error) {
-      logError('Link Group resolution failed; gating by material Price only', {
-        materialId: material.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      if (!isPaidMaterial(material.priceAmount)) {
-        return;
-      }
-      if (userId === null || userId === undefined) {
-        throw new PaymentRequiredError();
-      }
-      const directFallback = await entitlements.findEntitlement(
-        userId,
-        material.id,
-      );
-      if (directFallback === null) {
-        throw new PaymentRequiredError();
-      }
-      return;
-    }
-
-    const memberIds =
-      members.length > 0 ? members.map((m) => m.id) : [material.id];
-    const groupHasPaidMember =
-      isPaidMaterial(material.priceAmount) ||
-      members.some((m) => isPaidMaterial(m.priceAmount));
-
-    // Truly free (Req 8.1): open to everyone.
-    if (!groupHasPaidMember) {
-      return;
-    }
-
     if (userId === null || userId === undefined) {
       throw new PaymentRequiredError();
     }
-
-    // Direct-Entitlement fast path (Req 4.1).
-    const direct = await entitlements.findEntitlement(userId, material.id);
-    if (direct !== null && isEntitled([direct], userId, material.id)) {
-      return;
-    }
-
-    // Effective Entitlement across the group (Req 4.2, 10.1).
-    const entitledIds = new Set(
-      await entitlements.listEntitledMaterialIds(userId),
-    );
-    if (!isEffectivelyEntitled(entitledIds, memberIds, material.id)) {
+    const entitlement = await entitlements.findEntitlement(userId, materialId);
+    const held = entitlement === null ? [] : [entitlement];
+    if (!isEntitled(held, userId, materialId)) {
       throw new PaymentRequiredError();
     }
   }
@@ -778,62 +718,10 @@ export function createMaterialService(
     if (record === null) {
       throw new NotFoundError('The requested Study Material was not found.');
     }
-    if (isAdmin !== true) {
-      await requireAccess(userId, record);
+    if (isAdmin !== true && isPaidMaterial(record.priceAmount)) {
+      await requireEntitlement(userId, id);
     }
     return toMaterialDto(record);
-  }
-
-  /**
-   * List the Paid Materials a Learner could purchase to unlock the given
-   * material through its Link Group. When the material is itself paid it is
-   * included; when it is a Free Material locked by a paid sibling, its paid
-   * group members are returned so the Frontend can link the Learner to a note
-   * they can actually pay for. A missing material yields a not-found error.
-   * On a Link Group resolution failure the material's own Price is used as the
-   * sole closure, so a paid material still surfaces itself as an option.
-   */
-  async function getUnlockOptions(id: string): Promise<UnlockOptionDto[]> {
-    const record = await materials.findById(id);
-    if (record === null) {
-      throw new NotFoundError('The requested Study Material was not found.');
-    }
-
-    let members: { id: string; priceAmount?: number | null }[];
-    try {
-      members = await linkGroups.listGroupMembersWithPrice(id);
-    } catch (error) {
-      logError('Link Group resolution failed; using material Price only', {
-        materialId: id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      members = [];
-    }
-
-    // Ungrouped (or unresolved): the closure is the material itself.
-    const closure =
-      members.length > 0
-        ? members
-        : [{ id: record.id, priceAmount: record.priceAmount }];
-
-    const options: UnlockOptionDto[] = [];
-    for (const member of closure) {
-      if (!isPaidMaterial(member.priceAmount)) {
-        continue;
-      }
-      const memberRecord =
-        member.id === record.id ? record : await materials.findById(member.id);
-      if (memberRecord === null) {
-        continue;
-      }
-      options.push({
-        id: memberRecord.id,
-        title: memberRecord.title,
-        priceAmount: memberRecord.priceAmount ?? null,
-        currency: memberRecord.currency ?? null,
-      });
-    }
-    return options;
   }
 
   return {
@@ -846,7 +734,6 @@ export function createMaterialService(
     removeThumbnail,
     listThumbnails,
     getMaterial,
-    getUnlockOptions,
   };
 }
 
@@ -962,11 +849,6 @@ export function createDefaultMaterialService(): MaterialService {
     storage: { putObject, deleteObject },
     entitlements: {
       findEntitlement: entitlementRepository.findEntitlement,
-      listEntitledMaterialIds: entitlementRepository.listEntitledMaterialIds,
-    },
-    linkGroups: {
-      listGroupMemberIds: linkGroupRepository.listGroupMemberIds,
-      listGroupMembersWithPrice: linkGroupRepository.listGroupMembersWithPrice,
     },
   });
 }

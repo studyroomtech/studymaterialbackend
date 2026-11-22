@@ -64,7 +64,6 @@ function toCatalogMaterialInput(
     tags: material.materialTags.map((materialTag) => ({
       categoryId: materialTag.tagId,
     })),
-    linkGroupId: material.linkGroupId,
     thumbnails: toThumbnailDtos(material.thumbnails),
     averageRating:
       material.ratingCount > 0

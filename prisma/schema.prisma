@@ -58,26 +58,22 @@ model Tag {
 }
 
 model StudyMaterial {
-  id            String             @id @default(cuid())
+  id            String              @id @default(cuid())
   title         String // 1–200 chars (app-validated)
-  description   String             @default("") // 0–2000 chars (app-validated)
+  description   String              @default("") // 0–2000 chars (app-validated)
   objectKey     String // R2 key (Req 1.13)
   fileName      String
   contentType   String
   fileSizeBytes Int
   priceAmount   Int? // null/0 => Free; >0 => Paid (Req 11.13–11.14). Smallest currency unit (paise).
-  currency      String             @default("INR") // Req 11.13/12: INR only (app-validated)
+  currency      String              @default("INR") // Req 11.13/12: INR only (app-validated)
   // Denormalized rating aggregates: average = ratingSum / ratingCount (null when
   // ratingCount == 0). Kept in sync transactionally on every Review write so the
   // catalog/search listings avoid per-material aggregation (N+1).
-  ratingCount   Int                @default(0)
-  ratingSum     Int                @default(0)
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  // Link Group membership: a material belongs to at most one MaterialLinkGroup
-  // (structural at-most-one-group). null => ungrouped (existing behavior).
-  linkGroupId   String?
-  linkGroup     MaterialLinkGroup? @relation(fields: [linkGroupId], references: [id], onDelete: SetNull)
+  ratingCount   Int                 @default(0)
+  ratingSum     Int                 @default(0)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
   materialTags  MaterialTag[]
   downloads     Download[]
   entitlements  Entitlement[]
@@ -91,7 +87,6 @@ model StudyMaterial {
   thumbnails    MaterialThumbnail[]
 
   @@index([title])
-  @@index([linkGroupId])
 }
 
 // A single stored file (e.g. a PDF) belonging to a Study Material. A material
@@ -124,17 +119,6 @@ model MaterialThumbnail {
   createdAt       DateTime      @default(now())
 
   @@index([studyMaterialId])
-}
-
-// A shared-access group of two or more Study Materials. A Direct Entitlement for
-// any member grants Effective Entitlement to every member. Siblings are simply
-// the other materials sharing this group; grouping is symmetric and transitive
-// by construction (single FK on StudyMaterial).
-model MaterialLinkGroup {
-  id        String          @id @default(cuid())
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
-  members   StudyMaterial[]
 }
 
 model Review {

@@ -279,33 +279,6 @@ export interface MaterialEntitlementRepository {
     userId: string,
     studyMaterialId: string,
   ): Promise<EntitlementRef | null>;
-  /**
-   * List the Study Material ids the Learner holds a Direct Entitlement for.
-   * Backs the Effective-Entitlement check: after the Direct fast path misses,
-   * the gate derives access across the material's Link Group closure from this
-   * set (Req 4.2, 10.1).
-   */
-  listEntitledMaterialIds(userId: string): Promise<string[]>;
-}
-
-/**
- * Persistence contract for Link Group membership lookups consumed by the view
- * gate to derive an Effective Entitlement across a material's Link Group
- * (Req 4.2). `listGroupMemberIds` returns the group closure (the material plus
- * its siblings), or an empty array when the material is ungrouped — reducing
- * the decision to the Direct check (Req 10.1). If the lookup throws, the gate
- * falls back to Direct-only and denies propagated access (Req 5.5).
- */
-export interface MaterialLinkGroupRepository {
-  listGroupMemberIds(materialId: string): Promise<string[]>;
-  /**
-   * The material's Link Group members (self + siblings) with each member's
-   * Price, so the gate can tell whether the group contains a Paid Material and
-   * therefore gates an otherwise-Free member. Empty when ungrouped.
-   */
-  listGroupMembersWithPrice(
-    materialId: string,
-  ): Promise<{ id: string; priceAmount: number | null }[]>;
 }
 
 /**
@@ -339,13 +312,6 @@ export interface MaterialServiceDeps {
    * implementation wraps the Prisma-backed Entitlement repository.
    */
   entitlements: MaterialEntitlementRepository;
-  /**
-   * Link Group membership lookups used to extend the view gate with an
-   * Effective Entitlement across a material's Link Group (Req 4.2, 5.5).
-   * Injected by the controller layer; the concrete implementation wraps the
-   * Prisma-backed Link Group repository.
-   */
-  linkGroups: MaterialLinkGroupRepository;
   generateObjectKey?: () => string;
   /** Mints the Object Storage Key for a new thumbnail (injectable for tests). */
   generateThumbnailKey?: () => string;
@@ -405,25 +371,4 @@ export interface MaterialService {
     userId?: string | null,
     isAdmin?: boolean,
   ): Promise<MaterialDto>;
-  /**
-   * List the purchasable Paid Materials whose purchase would unlock the given
-   * material through its Link Group (linked-material-entitlement). When the
-   * material is itself paid it is included; when it is a Free Material locked by
-   * a paid sibling, its paid group members are returned so the Frontend can link
-   * the Learner to a note they can actually pay for. A missing material yields a
-   * not-found error (Req 5.4). Empty when nothing in the group is purchasable.
-   */
-  getUnlockOptions(id: string): Promise<UnlockOptionDto[]>;
-}
-
-/**
- * A purchasable Paid Material offered to unlock a locked material through its
- * Link Group: the paid note's id, title, and Price. The Frontend links the
- * Learner to `/materials/{id}` to complete payment there.
- */
-export interface UnlockOptionDto {
-  id: string;
-  title: string;
-  priceAmount: number | null;
-  currency: string | null;
 }

@@ -34,7 +34,6 @@ import { z } from 'zod';
 import {
   getMaterialHandler,
   getMaterialThumbnailsHandler,
-  getUnlockOptionsHandler,
   searchMaterialsHandler,
 } from '../controllers/material.controller';
 import { listPaidMaterialsHandler } from '../controllers/payment.controller';
@@ -80,11 +79,6 @@ materialsRouter.get(
   searchMaterialsHandler,
 );
 materialsRouter.get('/materials/paid', listPaidMaterialsHandler);
-materialsRouter.get(
-  '/materials/:id/unlock-options',
-  validate({ params: materialParamsSchema }),
-  getUnlockOptionsHandler,
-);
 // Public thumbnails list — not entitlement-gated, so the locked preview page
 // can show a note's images before purchase.
 materialsRouter.get(

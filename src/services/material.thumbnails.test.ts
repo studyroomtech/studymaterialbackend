@@ -126,17 +126,6 @@ function setup() {
       async findEntitlement() {
         return null;
       },
-      async listEntitledMaterialIds() {
-        return [];
-      },
-    },
-    linkGroups: {
-      async listGroupMemberIds() {
-        return [];
-      },
-      async listGroupMembersWithPrice() {
-        return [];
-      },
     },
     generateObjectKey: () => `materials/${(seq += 1)}`,
     generateThumbnailKey: () => `thumbnails/${(seq += 1)}`,

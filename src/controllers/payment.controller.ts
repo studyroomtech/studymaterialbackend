@@ -33,9 +33,7 @@ import type { NextFunction, Request, Response } from 'express';
 
 import { listMaterials } from '../repositories/material.repository';
 import { listEntitledMaterialIds } from '../repositories/entitlement.repository';
-import { listMembershipsForMaterials } from '../repositories/linkGroup.repository';
 import { createDefaultPaymentService } from '../services/payment.service';
-import { effectivelyEntitledIds } from '../services/entitlement.service';
 import { classifyPrice } from '../services/price.service';
 import { toThumbnailDtos } from '../services/material.service';
 import { DEFAULT_CURRENCY } from '../constants/payment.constant';
@@ -119,29 +117,15 @@ export async function listPaidMaterialsHandler(
 ): Promise<void> {
   try {
     const materials = await listMaterials();
-    const paidMaterials = materials.filter(
-      (material) => classifyPrice(material.priceAmount) === 'paid',
-    );
-    // Resolve the caller's Effective Entitlement (from their Access Token) so
-    // materials owned directly OR through a paid Link Group sibling render
-    // View/Download instead of Buy (Req 6.1, 6.2). A caller with no valid
-    // Access Token holds no entitlement, so every material is marked
-    // not-entitled (Req 6.3). For an ungrouped material this reduces to the
-    // Direct Entitlement check, preserving existing behavior (Req 9.5, 10.2).
+    // Resolve the caller's existing entitlements (from their Access Token) so
+    // already-purchased materials render View/Download instead of Buy (Req 12.3).
     const userId = req.auth.userId;
-    let entitledIds: ReadonlySet<string> = new Set<string>();
-    if (userId !== undefined) {
-      const directlyEntitledIds = new Set<string>(
-        await listEntitledMaterialIds(userId),
-      );
-      const memberships = await listMembershipsForMaterials(
-        paidMaterials.map((material) => material.id),
-      );
-      entitledIds = effectivelyEntitledIds(directlyEntitledIds, memberships);
-    }
-    const paid = paidMaterials.map((material) =>
-      toPaidMaterialDto(material, entitledIds),
+    const entitledIds = new Set<string>(
+      userId !== undefined ? await listEntitledMaterialIds(userId) : [],
     );
+    const paid = materials
+      .filter((material) => classifyPrice(material.priceAmount) === 'paid')
+      .map((material) => toPaidMaterialDto(material, entitledIds));
     const body: PaidMaterialsResponse = { materials: paid };
     res.status(200).json(body);
   } catch (error) {
