@@ -19,7 +19,8 @@ import { ROLE_ADMIN } from '../constants/roles.constant';
 import { countDownloadersByMaterial } from '../repositories/download.repository';
 import { listMaterials } from '../repositories/material.repository';
 import { buildCatalog } from '../services/catalog.service';
-import { toThumbnailDtos } from '../services/material.service';
+import { isPaidMaterial, toThumbnailDtos } from '../services/material.service';
+import { DEFAULT_CURRENCY } from '../constants/payment.constant';
 import type {
   CatalogInput,
   CatalogMaterialInput,
@@ -65,6 +66,11 @@ function toCatalogMaterialInput(
       categoryId: materialTag.tagId,
     })),
     thumbnails: toThumbnailDtos(material.thumbnails),
+    // Price fields let the admin edit form prefill the stored amount (the edit
+    // view reads them from the catalog). `null` denotes a Free Material.
+    priceAmount: material.priceAmount ?? null,
+    currency: material.currency ?? DEFAULT_CURRENCY,
+    isPaid: isPaidMaterial(material.priceAmount),
     averageRating:
       material.ratingCount > 0
         ? material.ratingSum / material.ratingCount
